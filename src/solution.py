@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.typing import NDArray
 from PIL import Image, ImageDraw
 
 class Solution:
@@ -9,15 +10,17 @@ class Solution:
         width: int,
         height: int,
         n_triangles: int,
-        target_image: np.ndarray,
-        use_transparency: bool,
-        representation: np.ndarray | None = None
+        target_image: NDArray[np.uint8],
+        use_transparency: bool = True,
+        use_self_adaptive_mutation_rate: bool = False,
+        representation: NDArray | None = None
     ) -> None:
         
         self.width = width
         self.height = height
         self.n_triangles = n_triangles
         self.use_transparency = use_transparency
+        self.use_self_adaptive_mutation_rate = use_self_adaptive_mutation_rate
         self.fitness = None
         
         if representation == None:
@@ -35,15 +38,24 @@ class Solution:
     
     def random_representation(self):
         # format of our individual triangle is:
+        # [x1, y1, x2, y2, x3, y3, r, g, b, alpha, mutation_rate]
+        # or
+        # [x1, y1, x2, y2, x3, y3, r, g, b, mutation_rate]
+        # or
         # [x1, y1, x2, y2, x3, y3, r, g, b, alpha]
         # or
         # [x1, y1, x2, y2, x3, y3, r, g, b]
 
-        representation = np.empty((self.n_triangles, 9), dtype=int)
+        n_genes = 9
         
         if (self.use_transparency):
-            representation = np.empty((self.n_triangles, 10), dtype=int)
+            n_genes += 1
+        
+        if (self.use_self_adaptive_mutation_rate):
+            n_genes += 1
 
+        representation = np.empty((self.n_triangles, n_genes), dtype=float)
+        
         # fill x coordinates (columns 0, 2, 4)
         representation[:, [0, 2, 4]] = np.random.randint(0, self.width, size=(self.n_triangles, 3))
 
@@ -53,9 +65,21 @@ class Solution:
         # fill color (columns 6, 7, 8)
         representation[:, [6, 7, 8]] = np.random.randint(0, 255, size=(self.n_triangles, 3))
         
-        if (self.use_transparency):
+        if self.use_transparency and self.use_self_adaptive_mutation_rate:
+            
+            # fill alpha and mutation rate (column 9 and 10)
+            representation[:, 9] = np.random.randint(0, 255, size=(self.n_triangles,))
+            representation[:, 10] = np.random.rand(self.n_triangles)
+            
+        elif self.use_transparency:
+            
             # fill alpha (column 9)
             representation[:, 9] = np.random.randint(0, 255, size=(self.n_triangles,))
+            
+        elif self.use_self_adaptive_mutation_rate:
+            
+            # fill mutation rate (column 9)
+            representation[:, 9] = np.random.rand(self.n_triangles)
 
         return representation
 
@@ -66,13 +90,13 @@ class Solution:
         for tri in self.representation:
             if self.use_transparency:
                 draw.polygon(
-                    [(tri[0], tri[1]), (tri[2], tri[3]), (tri[4], tri[5])],
-                    fill=(tri[6], tri[7], tri[8], tri[9])
+                    [(int(tri[0]), int(tri[1])), (int(tri[2]), int(tri[3])), (int(tri[4]), int(tri[5]))],
+                    fill=(int(tri[6]), int(tri[7]), int(tri[8]), int(tri[9]))
                 )
             else:
                 draw.polygon(
-                    [(tri[0], tri[1]), (tri[2], tri[3]), (tri[4], tri[5])],
-                    fill=(tri[6], tri[7], tri[8])
+                    [(int(tri[0]), int(tri[1])), (int(tri[2]), int(tri[3])), (int(tri[4]), int(tri[5]))],
+                    fill=(int(tri[6]), int(tri[7]), int(tri[8]))
                 )
 
         return image.convert("RGBA" if self.use_transparency else "RGB")
@@ -82,7 +106,7 @@ class Solution:
 
         # we need to convert to a bigger type because the difference in uint8 
         # will wrap around and give us incorrect results
-        error = solution_image.astype(np.float16) - self.target_image.astype(np.float16)
+        error = solution_image.astype(np.float32) - self.target_image.astype(np.float32)
         self.fitness = np.sqrt(np.mean(error ** 2))
         
         return self.fitness

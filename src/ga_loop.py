@@ -7,7 +7,7 @@ from src.solution import Solution
 def base_ga_loop(
     solution_class: Callable,
     population_size: int,
-    n_iterations: int,
+    n_generations: int,
     selection_function: Callable,
     crossover_function: Callable,
     crossover_rate: float,
@@ -32,7 +32,7 @@ def base_ga_loop(
     
     iteration_start_time = datetime.datetime.now()
     
-    for i in range(n_iterations):
+    for i in range(n_generations):
         
         # Selection phase
         parents = selection_function(population)
@@ -78,13 +78,14 @@ def base_ga_loop(
 def mutation_weight_decay_ga_loop(
     solution_class: Callable,
     population_size: int,
-    n_iterations: int,
+    n_generations: int,
     selection_function: Callable,
     crossover_function: Callable,
     crossover_rate: float,
     mutation_function: Callable,
     mutation_rate: float,
     mutation_rate_decay: float | None = None,
+    elitism: int | None = None,
     progress_callback: Callable | None = None,
     verbose: bool = True,
 ) -> tuple[Solution, dict]:
@@ -104,7 +105,7 @@ def mutation_weight_decay_ga_loop(
     
     iteration_start_time = datetime.datetime.now()
     
-    for i in range(n_iterations):
+    for i in range(n_generations):
         
         # Selection phase
         parents = selection_function(population)

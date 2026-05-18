@@ -93,18 +93,22 @@ def arithmetic_blend_crossover(parent1: Solution, parent2: Solution, crossover_r
     
     if parent1.n_triangles != parent2.n_triangles:
         raise Exception("Parents did not have the same number of triangles.")
+
+    triangle_len = len(parent1.representation[0])
     
     child1 = deepcopy(parent1)
     child2 = deepcopy(parent2)
     
     for i_triangle in range(parent1.n_triangles):
         if np.random.random() < crossover_rate:
-            for i_gene in range(len(parent1.representation[i_triangle])):
+            for i_gene in range(triangle_len):
                 max_value = 255
                 if i_gene in [0, 2, 4]:
                     max_value = 300
                 elif i_gene in [1, 3, 5]:
                     max_value = 400
+                elif parent1.use_self_adaptive_mutation_rate and i_gene == triangle_len - 1:
+                    max_value = 1
                 
                 child2.representation[i_triangle][i_gene] = min(max_value, max(0, \
                     alpha * parent1.representation[i_triangle][i_gene] + \

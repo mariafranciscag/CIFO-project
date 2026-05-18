@@ -6,19 +6,34 @@ def random_per_gene_reset_mutation(individual: Solution, mutation_rate: float) -
     n = individual.n_triangles
     triangle_len = len(rep[0])
 
-    # boolean mask: True where a gene should mutate
-    mask = np.random.random((n, triangle_len)) < mutation_rate
+    # boolean mask: True where a gene should mutate.
+    # If self-adaptive: each triangle uses its own mutation rate (last column).
+    # Broadcast shape (n, 1) against (n, triangle_len) so each triangle's rate
+    # applies to all its genes.
+    if individual.use_self_adaptive_mutation_rate:
+        mask = np.random.random((n, triangle_len)) < rep[:, [-1]]
+    else:
+        mask = np.random.random((n, triangle_len)) < mutation_rate
 
     # generate all candidate new values upfront
-    candidates = np.empty((n, triangle_len), dtype=int)
+    candidates = np.empty((n, triangle_len), dtype=float)
     candidates[:, [0, 2, 4]] = np.random.randint(0, individual.width, size=(n, 3))
     candidates[:, [1, 3, 5]] = np.random.randint(0, individual.height, size=(n, 3))
-    candidates[:, 6:] = np.random.randint(0, 255, size=(n, triangle_len - 6))
+
+    if individual.use_self_adaptive_mutation_rate:
+        # color genes (r, g, b, alpha if transparency)
+        candidates[:, 6:triangle_len-1] = np.random.randint(0, 255, size=(n, triangle_len - 7))
+        # mutation rate gene — reset to a fresh random rate in [0, 1)
+        candidates[:, -1] = np.random.rand(n)
+    else:
+        candidates[:, 6:] = np.random.randint(0, 255, size=(n, triangle_len - 6))
 
     # apply mutations in one vectorized step
     rep[:] = np.where(mask, candidates, rep)
 
     return individual
+
+# WE NEED TO MAKE ALL MUTATIONS USE THE INDIVIDUAL MUTATION RATE IF WE ARE USING SELF ADAPTIVE MUTATION
 
 def gaussian_creep_mutation(individual: Solution, mutation_rate: float, gaussian_std_dev: int = 5) -> Solution:
     rep = individual.representation
