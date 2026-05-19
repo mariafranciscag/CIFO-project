@@ -8,3 +8,11 @@ from .mutation import (
     triangle_reset_mutation,
     triangle_layer_swap_mutation,
 )
+from .fitness_sharing import (
+    representation_vectors,
+    sharing_function,
+    compute_counts,
+    apply_fitness_sharing, 
+    fitness_sharing_selection, 
+    measure_diversity,
+)

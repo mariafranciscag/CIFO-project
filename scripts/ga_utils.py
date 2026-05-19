@@ -2,7 +2,7 @@ from joblib import Parallel, delayed
 from .triangle_sol import TriangleSolution
 
 
-# ── Fitness cache ─────────────────────────────────────────────────────────────
+# Fitness cache 
 
 def get_fitness(ind):
     """Return cached fitness, computing it only on the first call."""
@@ -16,7 +16,7 @@ def invalidate_cache(ind):
     ind._cached_fitness = None
 
 
-# ── Parallel evaluation ───────────────────────────────────────────────────────
+# Parallel evaluation
 
 def _eval_one(ind: TriangleSolution) -> TriangleSolution:
     """Top-level function required for joblib pickling."""
