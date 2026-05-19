@@ -1,39 +1,37 @@
-import random
 import numpy as np
 from copy import deepcopy
+from typing import Callable
 
-from triangle_sol import TriangleSolution
-from ga_utils import get_fitness, evaluate_population
-from operators.selection import rank_based_selection, roulette_wheel_selection
+from .triangle_sol import TriangleSolution
+from .ga_utils import get_fitness, evaluate_population
+from operators.selection import tournament_selection
 from operators.crossover import one_point_crossover
-from operators.mutation import triangle_level_mutation
+from operators.mutation import triangle_gaussian_mutation
 
 
 def genetic_algorithm(
-    population_size     = 50,
-    n_generations       = 500,
-    selection_method    = 'rank',     # 'rank' | 'roulette' | 'tournament' | callable
-    crossover_fn        = None,       # callable(p1, p2, rate) -> (c1, c2)
-    mutation_fn         = None,       # callable(ind, rate, **kw) -> ind
-    crossover_rate      = 0.9,
-    mutation_rate       = 0.01,
-    mutation_rate_decay = 0.0,        # per-generation decay fraction
-    sigma_vertex        = 0.05,
-    sigma_colour        = 10,
-    elitism_n           = 2,
-    n_jobs              = -1,
-    verbose             = True,
-    verbose_every       = 50,
+    population_size: int = 50,
+    n_generations: int = 500,
+    selection_function: Callable = tournament_selection, # callable(pop) -> individual
+    crossover_function: Callable = one_point_crossover, # callable(p1, p2, rate) -> (c1, c2)
+    mutation_function: Callable = triangle_gaussian_mutation, # callable(ind, rate, **kw) -> ind
+    crossover_rate: float = 0.9,
+    mutation_rate: float = 0.01,
+    mutation_rate_decay: float | None = 0.0, # per-generation decay fraction
+    elitism_n = 2,
+    n_jobs = -1,
+    verbose = True,
+    verbose_every = 50,
 ):
     """
     Generational GA for the triangle image approximation problem.
 
     Parameters
     ----------
-    selection_method    : 'rank', 'roulette', 'tournament', or a callable(pop) -> individual
-    crossover_fn        : callable(p1, p2, crossover_rate) -> (child1, child2)
-    mutation_fn         : callable(ind, rate, **sigma_kw) -> ind
-    mutation_rate_decay : rate /= (1 + decay) each generation
+    selection_function : callable(pop) -> individual
+    crossover_function : callable(p1, p2, crossover_rate) -> (child1, child2)
+    mutation_function : callable(ind, rate, **sigma_kw) -> ind
+    mutation_rate_decay : rate /= (1 + decay) each generation or None
 
     Returns
     -------
@@ -41,26 +39,13 @@ def genetic_algorithm(
     history     : list[float]       — best RMSE per generation
     avg_history : list[float]       — average RMSE per generation
     """
-    # resolve selection operator
-    if callable(selection_method):
-        select = selection_method
-    elif selection_method == 'rank':
-        select = rank_based_selection
-    elif selection_method == 'tournament':
-        from operators.selection import tournament_selection
-        select = tournament_selection
-    else:
-        select = roulette_wheel_selection
-
-    _crossover = crossover_fn if crossover_fn is not None else one_point_crossover
-    _mutate    = mutation_fn  if mutation_fn  is not None else triangle_level_mutation
 
     # initialise population
-    population            = [TriangleSolution() for _ in range(population_size)]
-    population            = evaluate_population(population, n_jobs=n_jobs)
+    population = [TriangleSolution() for _ in range(population_size)]
+    population = evaluate_population(population, n_jobs=n_jobs)
     current_mutation_rate = mutation_rate
 
-    history     = []
+    history = []
     avg_history = []
 
     for gen in range(n_generations):
@@ -86,24 +71,22 @@ def genetic_algorithm(
         # build offspring
         offspring = []
         while len(next_gen) + len(offspring) < population_size:
-            p1 = select(population)
-            p2 = select(population)
+            p1 = selection_function(population)
+            p2 = selection_function(population)
 
-            o1, o2 = _crossover(p1, p2, crossover_rate)
+            o1, o2 = crossover_function(p1, p2, crossover_rate)
 
-            _mutate(o1, current_mutation_rate,
-                    sigma_vertex=sigma_vertex, sigma_colour=sigma_colour)
-            _mutate(o2, current_mutation_rate,
-                    sigma_vertex=sigma_vertex, sigma_colour=sigma_colour)
+            mutation_function(o1, current_mutation_rate)
+            mutation_function(o2, current_mutation_rate)
 
             offspring.append(o1)
             if len(next_gen) + len(offspring) < population_size:
                 offspring.append(o2)
 
-        offspring  = evaluate_population(offspring, n_jobs=n_jobs)
+        offspring = evaluate_population(offspring, n_jobs=n_jobs)
         population = next_gen + offspring
 
-        if mutation_rate_decay > 0:
+        if mutation_rate_decay is not None and mutation_rate_decay > 0:
             current_mutation_rate /= (1 + mutation_rate_decay)
 
     population.sort(key=lambda ind: get_fitness(ind))

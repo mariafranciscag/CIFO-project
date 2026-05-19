@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from ga_utils import get_fitness
+from scripts.ga_utils import get_fitness
 
 
 def roulette_wheel_selection(population):
@@ -34,7 +34,7 @@ def rank_based_selection(population):
     return sorted_pop[idx]
 
 
-def tournament_selection(population, tournament_size=3):
+def tournament_selection(population, tournament_size=2):
     """
     Tournament selection.
 

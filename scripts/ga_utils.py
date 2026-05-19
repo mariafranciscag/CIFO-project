@@ -1,4 +1,5 @@
 from joblib import Parallel, delayed
+from .triangle_sol import TriangleSolution
 
 
 # ── Fitness cache ─────────────────────────────────────────────────────────────
@@ -17,13 +18,13 @@ def invalidate_cache(ind):
 
 # ── Parallel evaluation ───────────────────────────────────────────────────────
 
-def _eval_one(ind):
+def _eval_one(ind: TriangleSolution) -> TriangleSolution:
     """Top-level function required for joblib pickling."""
     ind._cached_fitness = ind.fitness()
     return ind
 
 
-def evaluate_population(population, n_jobs=-1):
+def evaluate_population(population: list[TriangleSolution], n_jobs: int = -1) -> list[TriangleSolution]:
     """Compute (or refresh) fitness for every individual in parallel."""
     return Parallel(n_jobs=n_jobs, backend='loky')(
         delayed(_eval_one)(ind) for ind in population

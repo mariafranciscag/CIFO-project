@@ -1,8 +1,8 @@
 import random
 import numpy as np
 from copy import deepcopy
-from triangle_sol import TriangleSolution
-from ga_utils import invalidate_cache
+from scripts.triangle_sol import TriangleSolution
+from scripts.ga_utils import invalidate_cache
 
 
 def one_point_crossover(parent1, parent2, crossover_rate=0.9):
