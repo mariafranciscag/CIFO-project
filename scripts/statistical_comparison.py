@@ -2,6 +2,9 @@ from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 import numpy as np
+from multiprocessing import Manager
+from queue import Empty
+from threading import Thread
 
 from operators.crossover import two_point_crossover
 from operators.mutation import triangle_gaussian_mutation
@@ -9,7 +12,24 @@ from operators.selection import tournament_selection
 from scripts.ga import genetic_algorithm
 from scripts.triangle_sol import TriangleSolution
 
+
+def _track_generation_progress(progress_queue, progress_bar, total_generations: int):
+    """Consume worker generation updates and advance one shared progress bar."""
+    completed = 0
+    while completed < total_generations:
+        try:
+            update = progress_queue.get(timeout=0.1)
+        except Empty:
+            continue
+
+        if update is None:
+            break
+
+        progress_bar.update(update)
+        completed += update
+
 def _run_single_ga(
+    solution_class,
     population_size: int,
     n_generations: int,
     selection_function,
@@ -17,14 +37,21 @@ def _run_single_ga(
     mutation_function,
     crossover_rate: float,
     mutation_rate: float,
+    mutation_rate_decay: float | None,
     elitism_n: int,
     target_array,  # Pass target array to workers
+    progress_queue=None,
 ):
     """Helper function for parallel execution of a single GA run."""
     # Re-initialize target array in worker process (required for loky backend)
     TriangleSolution.target_array = target_array
-    
-    best, hist, avg_hist = genetic_algorithm(
+
+    def report_generation(*_):
+        if progress_queue is not None:
+            progress_queue.put(1)
+
+    _, hist, _ = genetic_algorithm(
+        solution_class=solution_class,
         population_size=population_size,
         n_generations=n_generations,
         selection_function=selection_function,
@@ -32,9 +59,11 @@ def _run_single_ga(
         mutation_function=mutation_function,
         crossover_rate=crossover_rate,
         mutation_rate=mutation_rate,
+        mutation_rate_decay=mutation_rate_decay,
         elitism_n=elitism_n,
         n_jobs=1,  # Single-threaded fitness eval to avoid nesting
         verbose=False,
+        generation_callback=report_generation,
     )
     return hist
 
@@ -66,38 +95,50 @@ def run_ga_statistical_comparison(
         for i_run in range(n_runs)
     ]
     
-    # Determine n_generations for progress bar
-    n_generations = 200  # default
-    if parameter_to_test == "n_generations" and parameter_values:
-        n_generations = parameter_values[0] if isinstance(parameter_values[0], int) else 200
+    task_generations = [
+        parameter_value if parameter_to_test == "n_generations" else 200
+        for parameter_value, _ in tasks
+    ]
+    total_generations = sum(task_generations)
     
-    # Calculate total generations across all runs
-    total_generations = len(tasks) * n_generations
-    
+
     # Run all GA instances in parallel with progress bar
-    print(f"\nStarting statistical comparison: {len(tasks)} GA runs × {n_generations} generations = {total_generations:,} total generations\n")
-    
-    histories = Parallel(n_jobs=n_jobs, backend='loky')(
-        tqdm(
-            (
-                delayed(_run_single_ga)(
-                    population_size=parameter_value if parameter_to_test == "population_size" else 50,
-                    n_generations=parameter_value if parameter_to_test == "n_generations" else 200,
-                    selection_function=parameter_value if parameter_to_test == "selection_function" else tournament_selection,
-                    crossover_function=parameter_value if parameter_to_test == "crossover_function" else two_point_crossover,
-                    mutation_function=parameter_value if parameter_to_test == "mutation_function" else triangle_gaussian_mutation,
-                    crossover_rate=parameter_value if parameter_to_test == "crossover_rate" else 0.9,
-                    mutation_rate=parameter_value if parameter_to_test == "mutation_rate" else 0.02,
-                    elitism_n=parameter_value if parameter_to_test == "elitism_n" else 2,
-                    target_array=TriangleSolution.target_array,
-                )
-                for parameter_value, i_run in tasks
-            ),
-            total=len(tasks),
-            desc=f"Progress",
-            unit=" run"
-        )
+    print(
+        f"\nStarting statistical comparison: {len(tasks)} GA runs, "
+        f"{total_generations:,} total generations\n"
     )
+    
+    with Manager() as manager:
+        progress_queue = manager.Queue()
+        with tqdm(total=total_generations, desc="Progress", unit=" gen") as progress_bar:
+            progress_thread = Thread(
+                target=_track_generation_progress,
+                args=(progress_queue, progress_bar, total_generations),
+                daemon=True,
+            )
+            progress_thread.start()
+
+            try:
+                histories = Parallel(n_jobs=n_jobs, backend='loky')(
+                    delayed(_run_single_ga)(
+                        solution_class=parameter_value if parameter_to_test == "solution_class" else TriangleSolution,
+                        population_size=parameter_value if parameter_to_test == "population_size" else 50,
+                        n_generations=parameter_value if parameter_to_test == "n_generations" else 200,
+                        selection_function=parameter_value if parameter_to_test == "selection_function" else tournament_selection,
+                        crossover_function=parameter_value if parameter_to_test == "crossover_function" else two_point_crossover,
+                        mutation_function=parameter_value if parameter_to_test == "mutation_function" else triangle_gaussian_mutation,
+                        crossover_rate=parameter_value if parameter_to_test == "crossover_rate" else 0.9,
+                        mutation_rate=parameter_value if parameter_to_test == "mutation_rate" else 0.02,
+                        mutation_rate_decay=parameter_value if parameter_to_test == "mutation_rate_decay" else None,
+                        elitism_n=parameter_value if parameter_to_test == "elitism_n" else 2,
+                        target_array=TriangleSolution.target_array,
+                        progress_queue=progress_queue,
+                    )
+                    for parameter_value, i_run in tasks
+                )
+            finally:
+                progress_queue.put(None)
+                progress_thread.join()
     
     # Reorganize results by parameter value
     task_idx = 0
