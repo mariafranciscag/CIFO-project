@@ -73,6 +73,7 @@ def run_ga_statistical_comparison(
     parameter_values: list,
     n_runs: int = 30,
     n_jobs: int = -1,
+    n_generations: int = 200
 ):
     """
     Run GA multiple times with different parameter values and compute average fitness and std dev.
@@ -96,7 +97,7 @@ def run_ga_statistical_comparison(
     ]
     
     task_generations = [
-        parameter_value if parameter_to_test == "n_generations" else 200
+        parameter_value if parameter_to_test == "n_generations" else n_generations
         for parameter_value, _ in tasks
     ]
     total_generations = sum(task_generations)
@@ -123,7 +124,7 @@ def run_ga_statistical_comparison(
                     delayed(_run_single_ga)(
                         solution_class=parameter_value if parameter_to_test == "solution_class" else TriangleSolution,
                         population_size=parameter_value if parameter_to_test == "population_size" else 50,
-                        n_generations=parameter_value if parameter_to_test == "n_generations" else 200,
+                        n_generations=parameter_value if parameter_to_test == "n_generations" else n_generations,
                         selection_function=parameter_value if parameter_to_test == "selection_function" else tournament_selection,
                         crossover_function=parameter_value if parameter_to_test == "crossover_function" else two_point_crossover,
                         mutation_function=parameter_value if parameter_to_test == "mutation_function" else triangle_gaussian_mutation,
