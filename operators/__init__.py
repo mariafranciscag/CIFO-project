@@ -16,3 +16,14 @@ from .fitness_sharing import (
     fitness_sharing_selection, 
     measure_diversity,
 )
+from .new_fitness_sharing import (
+    representation_vectors,
+    sharing_function,
+    compute_counts,
+    apply_fitness_sharing, 
+    fitness_sharing_selection, 
+    measure_diversity,
+    AutomaticFitnessSharingSelection,
+    AdvancedFitnessSharingSelection,
+    GenerationCounterCallback
+)
