@@ -269,3 +269,68 @@ def triangle_layer_swap_mutation(individual: TriangleSolution, mutation_rate: fl
     individual.representation = rep
     invalidate_cache(individual)
     return individual
+
+
+def geometric_mutation(
+    individual: TriangleSolution,
+    mutation_rate: float = 0.01,
+    mutation_step_vertex: float = 5,
+    mutation_step_colour: float = 10,
+    mutation_step_rate: float = 0.01,
+) -> TriangleSolution:
+    """
+    Geometric box mutation for continuous triangle representations.
+
+    For each selected triangle, each coordinate gene receives uniform noise in
+    [-mutation_step_vertex, mutation_step_vertex], and each RGBA gene receives
+    uniform noise in [-mutation_step_colour, mutation_step_colour]. This matches
+    the book's geometric/box mutation idea for bounded continuous genes.
+    """
+
+    rep = individual.representation[:]
+    n_triangles = individual.n_triangles
+    triangle_len = individual.triangle_len
+    is_adaptive = (triangle_len == 11)
+
+    for t in range(n_triangles):
+        base = t * triangle_len
+        
+        # Get mutation rate (either parameter or evolved gene)
+        if is_adaptive:
+            triangle_mutation_rate = rep[base + 10]
+        else:
+            triangle_mutation_rate = mutation_rate
+        
+        if np.random.random() < triangle_mutation_rate:
+            # Mutate vertices (genes 0-5)
+            for i in [0, 2, 4]:
+                rep[base + i] = np.clip(
+                    rep[base + i] + np.random.uniform(-mutation_step_vertex, mutation_step_vertex),
+                    0,
+                    individual.img_width,
+                )
+            for i in [1, 3, 5]:
+                rep[base + i] = np.clip(
+                    rep[base + i] + np.random.uniform(-mutation_step_vertex, mutation_step_vertex),
+                    0,
+                    individual.img_height,
+                )
+            # Mutate colours (genes 6-9)
+            for i in range(6, 10):
+                rep[base + i] = np.clip(
+                    rep[base + i] + np.random.uniform(-mutation_step_colour, mutation_step_colour),
+                    0,
+                    255,
+                )
+        
+        # If adaptive, evolve the mutation rate itself
+        if is_adaptive:
+            rep[base + 10] = np.clip(
+                rep[base + 10] + np.random.uniform(-mutation_step_rate, mutation_step_rate),
+                0,
+                1,
+            )
+
+    individual.representation = rep
+    invalidate_cache(individual)
+    return individual

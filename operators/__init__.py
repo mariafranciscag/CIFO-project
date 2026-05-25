@@ -7,6 +7,7 @@ from .mutation import (
     triangle_reset_gene_mutation,
     triangle_reset_mutation,
     triangle_layer_swap_mutation,
+    geometric_mutation,
 )
 from .fitness_sharing import (
     representation_vectors,

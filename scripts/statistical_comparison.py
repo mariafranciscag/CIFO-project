@@ -8,6 +8,7 @@ from threading import Thread
 from scipy import stats
 import pickle
 from pathlib import Path
+from functools import partial
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 
@@ -74,32 +75,93 @@ def _run_single_ga(
     return hist, best.fitness()
 
 
-def _calculate_population_size(parameter_value, parameter_to_test, eval_budget):
+def _calculate_population_size(parameter_value, parameter_to_test, eval_budget, default_population_size=50):
     if parameter_to_test == "population_size":
         return parameter_value
     elif parameter_to_test == "n_generations":
         return eval_budget // parameter_value
     else:
-        return 50
+        return default_population_size
 
-def _calculate_n_generations(parameter_value, parameter_to_test, eval_budget):
+def _calculate_n_generations(parameter_value, parameter_to_test, eval_budget, default_population_size=50):
     if parameter_to_test == "n_generations":
         return parameter_value
     elif parameter_to_test == "population_size":
         return eval_budget // parameter_value
     else:
-        return eval_budget // 50 # add more generations if eval budget is increased
+        return eval_budget // default_population_size # add more generations if eval budget is increased
+
+def _select_mutation_function(parameter_value, parameter_to_test):
+    if parameter_to_test == "mutation_function":
+        return parameter_value
+    if parameter_to_test == "sigma_vertex":
+        return partial(triangle_gaussian_mutation, sigma_vertex=parameter_value)
+    if parameter_to_test in ("sigma_colour", "sigma_color"):
+        return partial(triangle_gaussian_mutation, sigma_colour=parameter_value)
+    return triangle_gaussian_mutation
+
+def _param_value(parameter_name, default_value, parameter_value, parameter_to_test, fixed_params):
+    if parameter_to_test == parameter_name:
+        return parameter_value
+    return fixed_params.get(parameter_name, default_value)
+
+def _build_run_kwargs(
+    parameter_value,
+    parameter_to_test,
+    eval_budget,
+    default_population_size,
+    fixed_params,
+    target_array,
+    progress_queue,
+):
+    population_size = _calculate_population_size(
+        parameter_value,
+        parameter_to_test,
+        eval_budget,
+        default_population_size,
+    )
+    n_generations = _calculate_n_generations(
+        parameter_value,
+        parameter_to_test,
+        eval_budget,
+        default_population_size,
+    )
+
+    if parameter_to_test != "population_size":
+        population_size = fixed_params.get("population_size", population_size)
+    if parameter_to_test != "n_generations":
+        n_generations = fixed_params.get("n_generations", n_generations)
+
+    mutation_function = _select_mutation_function(parameter_value, parameter_to_test)
+    if parameter_to_test not in ("mutation_function", "sigma_vertex", "sigma_colour", "sigma_color"):
+        mutation_function = fixed_params.get("mutation_function", mutation_function)
+
+    return {
+        "solution_class": _param_value("solution_class", TriangleSolution, parameter_value, parameter_to_test, fixed_params),
+        "population_size": population_size,
+        "n_generations": n_generations,
+        "selection_function": _param_value("selection_function", tournament_selection, parameter_value, parameter_to_test, fixed_params),
+        "crossover_function": _param_value("crossover_function", one_point_crossover, parameter_value, parameter_to_test, fixed_params),
+        "mutation_function": mutation_function,
+        "crossover_rate": _param_value("crossover_rate", 0.9, parameter_value, parameter_to_test, fixed_params),
+        "mutation_rate": _param_value("mutation_rate", 0.02, parameter_value, parameter_to_test, fixed_params),
+        "mutation_rate_decay": _param_value("mutation_rate_decay", None, parameter_value, parameter_to_test, fixed_params),
+        "elitism_n": _param_value("elitism_n", 2, parameter_value, parameter_to_test, fixed_params),
+        "target_array": target_array,
+        "progress_queue": progress_queue,
+    }
 
 def run_ga_statistical_comparison(
     parameter_to_test: str,
     parameter_values: list,
     n_runs: int = 30,
     n_jobs: int = -1,
-    # n_generations: int = 200,
-    # population_size = 50,
+    n_generations: int | None = None,
+    population_size: int = 50,
     eval_budget: int = 10_000, # 50 individuals x 200 generations = 10 000 evaluations
     progress_smoothing: float = 0.0,
     progress_mininterval: float = 1.0,
+    fixed_params: dict | None = None,
 ):
     """
     Run GA multiple times with different parameter values and compute average fitness and std dev.
@@ -109,15 +171,26 @@ def run_ga_statistical_comparison(
         parameter_values: List of values to test
         n_runs: Number of runs per parameter value
         n_jobs: Number of parallel jobs (-1 = all cores)
+        n_generations: Optional fixed generation count for non-population-size
+            comparisons. Kept for backward compatibility with older notebook cells.
+        population_size: Population size for non-population-size comparisons.
+        eval_budget: Fitness-evaluation budget used when n_generations is not
+            supplied, and always used for population-size comparisons.
         progress_smoothing: tqdm smoothing factor. 0.0 reports the whole-run
             average speed/ETA, which is less jumpy for parallel GA runs.
         progress_mininterval: Minimum seconds between progress bar refreshes.
+        fixed_params: Optional GA parameter overrides used for every run unless
+            that same parameter is the one being tested. Example:
+            {"crossover_function": uniform_crossover, "mutation_rate": 0.01}.
     
     Returns:
         Dictionary mapping each parameter value to mean/std histories and final
         best fitness values for each run.
     """
     results = {}
+    fixed_params = fixed_params or {}
+    if n_generations is not None and parameter_to_test != "population_size":
+        eval_budget = population_size * n_generations
     
     # Collect all tasks: (parameter_value, run_index)
     tasks = [
@@ -128,8 +201,24 @@ def run_ga_statistical_comparison(
     
     task_configs = [
         (
-            _calculate_population_size(parameter_value, parameter_to_test, eval_budget),
-            _calculate_n_generations(parameter_value, parameter_to_test, eval_budget),
+            _build_run_kwargs(
+                parameter_value=parameter_value,
+                parameter_to_test=parameter_to_test,
+                eval_budget=eval_budget,
+                default_population_size=population_size,
+                fixed_params=fixed_params,
+                target_array=TriangleSolution.target_array,
+                progress_queue=None,
+            )["population_size"],
+            _build_run_kwargs(
+                parameter_value=parameter_value,
+                parameter_to_test=parameter_to_test,
+                eval_budget=eval_budget,
+                default_population_size=population_size,
+                fixed_params=fixed_params,
+                target_array=TriangleSolution.target_array,
+                progress_queue=None,
+            )["n_generations"],
         )
         for parameter_value, _ in tasks
     ]
@@ -164,20 +253,15 @@ def run_ga_statistical_comparison(
 
             try:
                 run_outputs = Parallel(n_jobs=n_jobs, backend='loky')(
-                    delayed(_run_single_ga)(
-                        solution_class=parameter_value if parameter_to_test == "solution_class" else TriangleSolution,
-                        population_size=_calculate_population_size(parameter_value, parameter_to_test, eval_budget),
-                        n_generations=_calculate_n_generations(parameter_value, parameter_to_test, eval_budget),
-                        selection_function=parameter_value if parameter_to_test == "selection_function" else tournament_selection,
-                        crossover_function=parameter_value if parameter_to_test == "crossover_function" else one_point_crossover,
-                        mutation_function=parameter_value if parameter_to_test == "mutation_function" else triangle_gaussian_mutation,
-                        crossover_rate=parameter_value if parameter_to_test == "crossover_rate" else 0.9,
-                        mutation_rate=parameter_value if parameter_to_test == "mutation_rate" else 0.02,
-                        mutation_rate_decay=parameter_value if parameter_to_test == "mutation_rate_decay" else None,
-                        elitism_n=parameter_value if parameter_to_test == "elitism_n" else 2,
+                    delayed(_run_single_ga)(**_build_run_kwargs(
+                        parameter_value=parameter_value,
+                        parameter_to_test=parameter_to_test,
+                        eval_budget=eval_budget,
+                        default_population_size=population_size,
+                        fixed_params=fixed_params,
                         target_array=TriangleSolution.target_array,
                         progress_queue=progress_queue,
-                    )
+                    ))
                     for parameter_value, i_run in tasks
                 )
             finally:
@@ -188,8 +272,17 @@ def run_ga_statistical_comparison(
     for i_param, parameter_value in enumerate(parameter_values):
         histories_for_param = []
         final_values_for_param = []
-        population_size = _calculate_population_size(parameter_value, parameter_to_test, eval_budget)
-        n_generations = _calculate_n_generations(parameter_value, parameter_to_test, eval_budget)
+        run_kwargs = _build_run_kwargs(
+            parameter_value=parameter_value,
+            parameter_to_test=parameter_to_test,
+            eval_budget=eval_budget,
+            default_population_size=population_size,
+            fixed_params=fixed_params,
+            target_array=TriangleSolution.target_array,
+            progress_queue=None,
+        )
+        actual_population_size = run_kwargs["population_size"]
+        actual_n_generations = run_kwargs["n_generations"]
         
         for i_run in range(n_runs):
             history, final_best = run_outputs[i_param * n_runs + i_run]
@@ -199,7 +292,7 @@ def run_ga_statistical_comparison(
         # Convert to numpy array and compute mean and std dev
         histories_array = np.array(histories_for_param)
         final_values_array = np.array(final_values_for_param)
-        evaluation_axis = np.arange(1, histories_array.shape[1] + 1) * population_size
+        evaluation_axis = np.arange(1, histories_array.shape[1] + 1) * actual_population_size
         
         results[parameter_value] = {
             "mean_history": np.mean(histories_array, axis=0),
@@ -207,9 +300,9 @@ def run_ga_statistical_comparison(
             "std_history": np.std(histories_array, axis=0),
             "best_per_run": final_values_array,
             "evaluation_axis": evaluation_axis,
-            "population_size": population_size,
-            "n_generations": n_generations,
-            "evaluation_budget": population_size * n_generations,
+            "population_size": actual_population_size,
+            "n_generations": actual_n_generations,
+            "evaluation_budget": actual_population_size * actual_n_generations,
         }
     
     return results
