@@ -1,5 +1,5 @@
 """
-HILL CLIMBING LOCAL SEARCY FOR THE TRIANGLE IMAGE GA (post-processing step)
+HILL CLIMBING LOCAL SEARCH FOR THE TRIANGLE IMAGE GA (post-processing step)
 
     After the GA converges, this module polishes the best solution by iterating
     small perturbations and keeping any that improve fitness. The result is a
