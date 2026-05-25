@@ -137,7 +137,7 @@ class TriangleSolution:
         plt.show()
 
 
-class AdaptiveTriangleSolution(TriangleSolution):
+class AdaptiveMutationRateTriangleSolution(TriangleSolution):
     """
     Extends TriangleSolution with per-triangle self-adaptive mutation rates.
     
@@ -147,6 +147,8 @@ class AdaptiveTriangleSolution(TriangleSolution):
     The 11th gene (mutation_rate) is evolved and controls how aggressively
     that triangle is mutated during evolution.
     """
+    initial_mutation_rate = 0.01
+    mutation_rate_penalty_weight = 10.0
     
     def __init__(
         self,
@@ -195,9 +197,34 @@ class AdaptiveTriangleSolution(TriangleSolution):
             genes[base + 9] = np.random.randint(0, 255)                 # A
             
             # Self-adaptive mutation rate (gene 10)
-            genes[base + 10] = np.random.uniform(0, 1)
+            genes[base + 10] = np.clip(
+                np.random.lognormal(np.log(self.initial_mutation_rate), 0.5), 0, 1
+            )
         
         return genes
+
+    # Fitness
+    def fitness(self):
+        if self._fitness is not None:
+            return self._fitness
+
+        rendered = self._render()
+        rendered_arr = np.array(rendered, dtype=np.float32)
+
+        target = self.target_array
+        
+        mean_mutation_rate = float(np.mean([
+            rate
+            for rate in self.representation[10::self.triangle_len]
+        ]))
+
+        diff = rendered_arr - target # type: ignore
+        self._fitness = float(
+            np.sqrt(np.mean(diff ** 2))
+            + self.mutation_rate_penalty_weight * mean_mutation_rate
+        )
+        
+        return self._fitness
     
     def __repr__(self):
         return f"AdaptiveTriangleSolution(fitness={self.fitness():.4f}, n_triangles={self.n_triangles}, adaptive_rates=True)"

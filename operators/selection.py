@@ -1,4 +1,3 @@
-import random
 import numpy as np
 from scripts.ga_utils import get_fitness
 
@@ -41,5 +40,5 @@ def tournament_selection(population, tournament_size=2):
     Randomly samples `tournament_size` individuals and returns the one
     with the lowest RMSE (minimisation problem).
     """
-    contestants = random.sample(population, tournament_size)
+    contestants = np.random.choice(population, tournament_size, replace=True) # sample with replacement so that the worst individual has non-zero probability
     return min(contestants, key=lambda ind: get_fitness(ind))

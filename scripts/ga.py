@@ -47,24 +47,14 @@ def genetic_algorithm(
     # initialise population
     population = [solution_class() for _ in range(population_size)]
     population = evaluate_population(population, n_jobs=n_jobs)
+    population.sort(key=lambda ind: get_fitness(ind))
     current_mutation_rate = mutation_rate
 
     history = []
     avg_history = []
 
     for gen in range(n_generations):
-        population.sort(key=lambda ind: get_fitness(ind))
-
-        best_fitness = get_fitness(population[0])
-        avg_fitness  = float(np.mean([get_fitness(ind) for ind in population]))
-        history.append(best_fitness)
-        avg_history.append(avg_fitness)
-
-        if verbose and (gen % verbose_every == 0 or gen == n_generations - 1):
-            print(f"Gen {gen:>4d} | best RMSE: {best_fitness:.4f} | "
-                  f"avg RMSE: {avg_fitness:.4f} | "
-                  f"mut rate: {current_mutation_rate:.5f}")
-
+        
         # elitism
         next_gen = []
         for ind in population[:elitism_n]:
@@ -89,12 +79,30 @@ def genetic_algorithm(
 
         offspring = evaluate_population(offspring, n_jobs=n_jobs)
         population = next_gen + offspring
+        population.sort(key=lambda ind: get_fitness(ind))
+        
+        best_fitness = get_fitness(population[0])
+        avg_fitness  = float(np.mean([get_fitness(ind) for ind in population]))
+        history.append(best_fitness)
+        avg_history.append(avg_fitness)
+        
+        if population[0].triangle_len == 11:
+            current_mutation_rate = float(np.mean([
+                rate
+                for ind in population
+                for rate in ind.representation[10::ind.triangle_len]
+            ]))
+
+        if verbose and (gen % verbose_every == 0 or gen == n_generations - 1):
+            print(f"Gen {gen:>4d} | best RMSE: {best_fitness:.4f} | "
+                  f"avg RMSE: {avg_fitness:.4f} | "
+                  f"mut rate: {current_mutation_rate:.5f}")
+        
+        if generation_callback is not None:
+            generation_callback(gen, best_fitness, avg_fitness)
 
         if mutation_rate_decay is not None and mutation_rate_decay > 0:
             current_mutation_rate /= (1 + mutation_rate_decay)
-
-        if generation_callback is not None:
-            generation_callback(gen, best_fitness, avg_fitness)
 
     population.sort(key=lambda ind: get_fitness(ind))
     best = population[0]

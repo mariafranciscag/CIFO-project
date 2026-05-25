@@ -3,7 +3,7 @@ from scripts.ga_utils import invalidate_cache
 from scripts.triangle_sol import TriangleSolution
 
 
-def triangle_gaussian_mutation(individual: TriangleSolution, mutation_rate: float = 0.01, sigma_vertex: float = 5, sigma_colour: float = 10) -> TriangleSolution:
+def triangle_gaussian_mutation(individual: TriangleSolution, mutation_rate: float = 0.01, sigma_vertex: float = 5, sigma_colour: float = 10, sigma_mutation_rate: float = 0.25) -> TriangleSolution:
     """
     Gaussian mutation on full triangle (vertices + RGBA).
 
@@ -50,7 +50,7 @@ def triangle_gaussian_mutation(individual: TriangleSolution, mutation_rate: floa
         # If adaptive, evolve the mutation rate itself
         if is_adaptive:
             rep[base + 10] = np.clip(
-                rep[base + 10] + np.random.normal(0, 1), 0, 1
+                rep[base + 10] + np.random.normal(0, sigma_mutation_rate), 0, 1
             )
 
     individual.representation = rep
@@ -218,7 +218,7 @@ def triangle_reset_mutation(individual: TriangleSolution, mutation_rate: float =
         
             # If adaptive, evolve the mutation rate itself (gene 10)
             if is_adaptive:
-                rep[base + 10] = np.random.uniform(0, 1)
+                rep[base + 10] = np.clip(np.random.lognormal(-2, 1), 0, 1)
     
     individual.representation = rep
     invalidate_cache(individual)
