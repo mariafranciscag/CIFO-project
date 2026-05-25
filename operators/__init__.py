@@ -25,5 +25,6 @@ from .new_fitness_sharing import (
     measure_diversity,
     AutomaticFitnessSharingSelection,
     AdvancedFitnessSharingSelection,
-    GenerationCounterCallback
+    GenerationCounterCallback,
+    population_diversity_report
 )

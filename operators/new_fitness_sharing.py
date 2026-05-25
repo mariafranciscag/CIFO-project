@@ -22,6 +22,7 @@ exploration into less-visited regions of the search space.
 import random
 import numpy as np
 from scripts.ga_utils import get_fitness
+from operators.selection import tournament_selection
 
 
 # Internal helpers 
@@ -163,12 +164,13 @@ class AutomaticFitnessSharingSelection:
     """
 
     def __init__(self, sigma_share: float = 50.0, alpha: float = 1.0,
-                 tournament_size: int = 3):
+                 selection_fn=None):
         self.sigma_share = sigma_share
         self.alpha = alpha
-        self.tournament_size = tournament_size
-        self._current_gen = 0
-        self._last_applied_gen = -1   # generation counter, not id()
+        # default to tournament if nothing passed
+        self.selection_fn = selection_fn or tournament_selection
+        self._current_gen = 0         
+        self._last_applied_gen = -1  
 
     def next_generation(self):
         """
@@ -188,11 +190,7 @@ class AutomaticFitnessSharingSelection:
 
     def __call__(self, population):
         self._ensure_sharing_applied(population)
-        return fitness_sharing_selection(
-            population,
-            method="tournament",
-            tournament_size=self.tournament_size,
-        )
+        return self.selection_fn(population)
 
 
 # AdvancedFitnessSharingSelection 
@@ -279,7 +277,7 @@ class AdvancedFitnessSharingSelection:
         )
 
 
-# Diversity metric 
+# Diversity monitoring system 
 
 def measure_diversity(population, sample_n=20):
     """
@@ -296,3 +294,94 @@ def measure_diversity(population, sample_n=20):
     dists = np.sqrt((diff ** 2).sum(axis=2))
     mask = np.triu(np.ones((sample_n, sample_n), dtype=bool), k=1)
     return float(dists[mask].mean()) if mask.sum() > 0 else 0.0
+
+
+def genotypic_variance(population):
+    """
+    Mean per-gene variance across the population.
+
+    A scalar summary of how spread out the raw genomes are.
+    Collapses toward 0 when all individuals converge to the same representation.
+    """
+    vecs = representation_vectors(population)   # (N, D)
+    return float(vecs.var(axis=0).mean())
+
+
+def genotypic_entropy(population, n_bins=20):
+    """
+    Mean per-gene Shannon entropy (bits), estimated via histogram binning.
+
+    Unlike variance, this captures bimodal or heavy-tailed gene distributions
+    that arise when the population splits into sub-niches.
+
+    Parameters
+    ----------
+    n_bins : int
+        Histogram resolution. 20 bins is reasonable for genes in [0, 255];
+        increase if you want finer resolution on vertex coordinates.
+
+    Returns
+    -------
+    float — mean entropy in bits across all genes.
+    """
+    vecs = representation_vectors(population)   # (N, D)
+    entropies = []
+    for gene_col in vecs.T:                     # iterate over D genes
+        counts, _ = np.histogram(gene_col, bins=n_bins)
+        probs = counts / counts.sum()
+        # Shannon entropy; ignore zero-probability bins to avoid log(0)
+        probs = probs[probs > 0]
+        entropies.append(-float(np.sum(probs * np.log2(probs))))
+    return float(np.mean(entropies))
+
+
+def fitness_variance(population):
+    """
+    Variance of raw fitness values across the population.
+
+    Cheap phenotypic diversity proxy — no rendering required.
+    Collapsing fitness variance is often the earliest warning of premature
+    convergence, even before genotypic measures show it.
+    """
+    fitnesses = np.array([get_fitness(ind) for ind in population])
+    return float(fitnesses.var())
+
+
+def fitness_entropy(population, n_bins=20):
+    """
+    Shannon entropy (bits) of the fitness distribution.
+
+    Bins the population's fitness values and computes entropy over that
+    histogram. Low entropy = most individuals clustered at one fitness level.
+    """
+    fitnesses = np.array([get_fitness(ind) for ind in population])
+    counts, _ = np.histogram(fitnesses, bins=n_bins)
+    probs = counts / counts.sum()
+    probs = probs[probs > 0]
+    return float(-np.sum(probs * np.log2(probs)))
+
+
+def population_diversity_report(population, sample_n=20, n_bins=20):
+    """
+    Compute all diversity metrics in one call and return a summary dict.
+
+    Combines the cheap metrics (computed on the full population) with the
+    expensive pairwise L2 (sampled). Designed to be called once per
+    generation and appended to a history list for later plotting.
+
+    Returns
+    -------
+    dict with keys:
+        'genotypic_variance'  : mean per-gene variance
+        'genotypic_entropy'   : mean per-gene Shannon entropy (bits)
+        'mean_pairwise_l2'    : sampled mean pairwise L2 distance (existing metric)
+        'fitness_variance'    : variance of raw fitness values
+        'fitness_entropy'     : Shannon entropy of fitness distribution
+    """
+    return {
+        'genotypic_variance': genotypic_variance(population),
+        'genotypic_entropy':  genotypic_entropy(population, n_bins=n_bins),
+        'mean_pairwise_l2':   measure_diversity(population, sample_n=sample_n),
+        'fitness_variance':   fitness_variance(population),
+        'fitness_entropy':    fitness_entropy(population, n_bins=n_bins),
+    }
