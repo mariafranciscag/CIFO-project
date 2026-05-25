@@ -540,3 +540,25 @@ def plot_statistical_comparison_interactive(
     fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.12)")
 
     fig.show()
+
+
+def plot_diversity_history(diversity_history, figsize=(14, 8)):
+    """
+    Plot all diversity metrics over generations from a list of report dicts.
+    One subplot per metric, so you can visually correlate diversity collapse
+    with fitness stagnation.
+    """
+    metrics = list(diversity_history[0].keys())
+    gens = np.arange(len(diversity_history))
+    fig, axes = plt.subplots(len(metrics), 1, figsize=figsize, sharex=True)
+    
+    for ax, metric in zip(axes, metrics):
+        values = [d[metric] for d in diversity_history]
+        ax.plot(gens, values, linewidth=1.5)
+        ax.set_ylabel(metric.replace('_', ' '), fontsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    axes[-1].set_xlabel('Generation')
+    axes[0].set_title('Population diversity over generations')
+    plt.tight_layout()
+    plt.show()
