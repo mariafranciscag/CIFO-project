@@ -24,6 +24,7 @@ def genetic_algorithm(
     verbose = True,
     verbose_every = 50,
     generation_callback: Callable | None = None,
+    population_callback: Callable | None = None,
 ):
     """
     Generational GA for the triangle image approximation problem.
@@ -96,10 +97,15 @@ def genetic_algorithm(
         if generation_callback is not None:
             generation_callback(gen, best_fitness, avg_fitness)
 
+        if population_callback is not None:
+                population_callback(gen, population)
+            
     population.sort(key=lambda ind: get_fitness(ind))
     best = population[0]
 
     if verbose:
         print(f"\nFinished. Best RMSE: {get_fitness(best):.4f}")
+    
+    
 
     return best, history, avg_history
