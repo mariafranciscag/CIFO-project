@@ -1,3 +1,4 @@
+import random
 import numpy as np
 from copy import deepcopy
 from typing import Callable
@@ -25,6 +26,7 @@ def genetic_algorithm(
     verbose_every = 50,
     generation_callback: Callable | None = None,
     population_callback: Callable | None = None,
+    seed: int | None = None,
 ):
     """
     Generational GA for the triangle image approximation problem.
@@ -44,6 +46,11 @@ def genetic_algorithm(
     history     : list[float]       — best RMSE per generation
     avg_history : list[float]       — average RMSE per generation
     """
+
+    # seed RNGs for reproducibility (must happen before any random draw)
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
 
     # initialise population
     population = [solution_class() for _ in range(population_size)]
