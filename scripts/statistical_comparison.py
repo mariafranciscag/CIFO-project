@@ -48,6 +48,7 @@ def _run_single_ga(
     elitism_n: int,
     target_array,  # Pass target array to workers
     progress_queue=None,
+    seed: int | None = None,
 ):
     """Helper function for parallel execution of a single GA run."""
     # Re-initialize target array in worker process (required for loky backend)
@@ -71,6 +72,7 @@ def _run_single_ga(
         n_jobs=1,  # Single-threaded fitness eval to avoid nesting
         verbose=False,
         generation_callback=report_generation,
+        seed=seed,
     )
     return hist, best.fitness()
 
@@ -113,6 +115,7 @@ def _build_run_kwargs(
     fixed_params,
     target_array,
     progress_queue,
+    seed: int | None = None,
 ):
     population_size = _calculate_population_size(
         parameter_value,
@@ -149,6 +152,7 @@ def _build_run_kwargs(
         "elitism_n": _param_value("elitism_n", 2, parameter_value, parameter_to_test, fixed_params),
         "target_array": target_array,
         "progress_queue": progress_queue,
+        "seed": seed,
     }
 
 def run_ga_statistical_comparison(
@@ -162,10 +166,11 @@ def run_ga_statistical_comparison(
     progress_smoothing: float = 0.0,
     progress_mininterval: float = 1.0,
     fixed_params: dict | None = None,
+    base_seed: int | None = None,
 ):
     """
     Run GA multiple times with different parameter values and compute average fitness and std dev.
-    
+
     Args:
         parameter_to_test: Name of parameter to vary
         parameter_values: List of values to test
@@ -182,6 +187,9 @@ def run_ga_statistical_comparison(
         fixed_params: Optional GA parameter overrides used for every run unless
             that same parameter is the one being tested. Example:
             {"crossover_function": uniform_crossover, "mutation_rate": 0.01}.
+        base_seed: Optional base seed. When set, run i_run receives
+            seed = base_seed + i_run, making the experiment reproducible and
+            pairing equivalent runs across parameter values.
     
     Returns:
         Dictionary mapping each parameter value to mean/std histories and final
@@ -261,6 +269,7 @@ def run_ga_statistical_comparison(
                         fixed_params=fixed_params,
                         target_array=TriangleSolution.target_array,
                         progress_queue=progress_queue,
+                        seed=(base_seed + i_run) if base_seed is not None else None,
                     ))
                     for parameter_value, i_run in tasks
                 )
