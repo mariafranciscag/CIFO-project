@@ -14,7 +14,7 @@ def genetic_algorithm(
     population_size: int = 50,
     n_generations: int = 200,
     selection_function: Callable = tournament_selection, # callable(pop) -> individual
-    crossover_function: Callable = one_point_crossover, # callable(p1, p2, rate) -> (c1, c2)
+    crossover_function: Callable = one_point_crossover, # callable(p1, p2, rate) -> child or (c1, c2)
     mutation_function: Callable = triangle_gaussian_mutation, # callable(ind, rate, **kw) -> ind
     crossover_rate: float = 0.9,
     mutation_rate: float = 0.01,
@@ -32,7 +32,7 @@ def genetic_algorithm(
     Parameters
     ----------
     selection_function : callable(pop) -> individual
-    crossover_function : callable(p1, p2, crossover_rate) -> (child1, child2)
+    crossover_function : callable(p1, p2, crossover_rate) -> child or (child1, child2)
     mutation_function : callable(ind, rate, **sigma_kw) -> ind
     mutation_rate_decay : rate /= (1 + decay) each generation or None
     generation_callback : callable(gen, best_fitness, avg_fitness) -> None or None
@@ -69,14 +69,14 @@ def genetic_algorithm(
             p1 = selection_function(population)
             p2 = selection_function(population)
 
-            o1, o2 = crossover_function(p1, p2, crossover_rate)
+            crossover_result = crossover_function(p1, p2, crossover_rate)
+            children = crossover_result if isinstance(crossover_result, tuple) else (crossover_result,)
 
-            mutation_function(o1, current_mutation_rate)
-            mutation_function(o2, current_mutation_rate)
-
-            offspring.append(o1)
-            if len(next_gen) + len(offspring) < population_size:
-                offspring.append(o2)
+            for child in children:
+                mutation_function(child, current_mutation_rate)
+                offspring.append(child)
+                if len(next_gen) + len(offspring) >= population_size:
+                    break
 
         offspring = evaluate_population(offspring, n_jobs=n_jobs)
         population = next_gen + offspring
@@ -105,9 +105,6 @@ def genetic_algorithm(
         if mutation_rate_decay is not None and mutation_rate_decay > 0:
             current_mutation_rate /= (1 + mutation_rate_decay)
 
-        if generation_callback is not None:
-            generation_callback(gen, best_fitness, avg_fitness)
-
         if population_callback is not None:
             population_callback(gen, population)
             
@@ -117,6 +114,4 @@ def genetic_algorithm(
     if verbose:
         print(f"\nFinished. Best RMSE: {get_fitness(best):.4f}")
     
-    
-
     return best, history, avg_history

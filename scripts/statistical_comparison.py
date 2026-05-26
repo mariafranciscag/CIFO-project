@@ -19,6 +19,52 @@ from scripts.ga import genetic_algorithm
 from scripts.triangle_sol import TriangleSolution
 
 
+def _is_pickleable(value) -> bool:
+    try:
+        pickle.dumps(value)
+    except Exception:
+        return False
+    return True
+
+
+def _safe_pickle_label(value) -> str:
+    if callable(value):
+        module = getattr(value, "__module__", None)
+        qualname = getattr(value, "__qualname__", None)
+        if module and qualname and "<lambda>" not in qualname:
+            return f"{module}.{qualname}"
+    return repr(value)
+
+
+def _make_pickleable(value):
+    if isinstance(value, dict):
+        safe_dict = {}
+        for key, item in value.items():
+            safe_key = _safe_pickle_label(key)
+            safe_item = _make_pickleable(item)
+
+            if safe_key in safe_dict:
+                base_key = str(safe_key)
+                suffix = 2
+                while f"{base_key} [{suffix}]" in safe_dict:
+                    suffix += 1
+                safe_key = f"{base_key} [{suffix}]"
+
+            safe_dict[safe_key] = safe_item
+        return safe_dict
+
+    if _is_pickleable(value):
+        return value
+
+    if isinstance(value, list):
+        return [_make_pickleable(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_make_pickleable(item) for item in value)
+
+    return _safe_pickle_label(value)
+
+
 def _track_evaluation_progress(progress_queue, progress_bar, total_evaluations: int):
     """Consume worker evaluation updates and advance one shared progress bar."""
     completed = 0
@@ -412,12 +458,16 @@ def run_statistical_test(values_a, values_b, name_a="A", name_b="B", paired=Fals
 def save_statistical_results(results: dict, filepath: str):
     """
     Save results returned by run_ga_statistical_comparison to a pickle file.
+
+    Notebook-defined lambdas cannot be pickled, so unpickleable keys/values are
+    converted to readable string labels before saving.
     """
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
+    serializable_results = _make_pickleable(results)
 
     with open(filepath, "wb") as f:
-        pickle.dump(results, f)
+        pickle.dump(serializable_results, f)
 
 
 def load_statistical_results(filepath: str) -> dict:

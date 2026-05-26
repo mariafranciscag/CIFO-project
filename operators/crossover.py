@@ -112,12 +112,15 @@ def geometric_crossover(parent1, parent2, crossover_rate=0.9):
     AdaptiveMutationRateTriangleSolution (11 genes). For adaptive solutions,
     the mutation-rate gene is averaged like the other continuous genes and
     clipped to [0, 1].
+
+    Returns a single offspring, since a convex combination of the two parents
+    already lies on the segment between them.
     """
     if np.random.random() > crossover_rate:
-        c1, c2 = deepcopy(parent1), deepcopy(parent2)
-        c1._cached_fitness = getattr(parent1, "_cached_fitness", None)
-        c2._cached_fitness = getattr(parent2, "_cached_fitness", None)
-        return c1, c2
+        parent = parent1 if np.random.random() < 0.5 else parent2
+        child = deepcopy(parent)
+        child._cached_fitness = getattr(parent, "_cached_fitness", None)
+        return child
 
     triangle_len = parent1.triangle_len
     if triangle_len != parent2.triangle_len:
@@ -131,8 +134,7 @@ def geometric_crossover(parent1, parent2, crossover_rate=0.9):
 
     weights = np.random.random(size=p1.shape).astype(np.float32)
 
-    r1 = weights * p1 + (1 - weights) * p2
-    r2 = (1 - weights) * p1 + weights * p2
+    child_representation = weights * p1 + (1 - weights) * p2
 
     lower_per_triangle = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     upper_per_triangle = [
@@ -151,12 +153,9 @@ def geometric_crossover(parent1, parent2, crossover_rate=0.9):
     lower = np.tile(lower_per_triangle, parent1.n_triangles)
     upper = np.tile(upper_per_triangle, parent1.n_triangles)
 
-    r1 = np.clip(r1, lower, upper).astype(np.float32)
-    r2 = np.clip(r2, lower, upper).astype(np.float32)
+    child_representation = np.clip(child_representation, lower, upper).astype(np.float32)
 
-    c1 = type(parent1)(r1)
-    c2 = type(parent2)(r2)
-    invalidate_cache(c1)
-    invalidate_cache(c2)
-    return c1, c2
+    child = type(parent1)(child_representation)
+    invalidate_cache(child)
+    return child
     
