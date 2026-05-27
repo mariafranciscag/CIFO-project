@@ -1,29 +1,8 @@
-"""
-RGB-RMSE vs perceptual-CIEDE2000 comparison — Challenge 1.
+"""RGB-RMSE vs CIEDE2000 paired comparison (Challenge 1).
 
-This module runs a *fair, paired* experiment comparing the two fitness
-functions and produces the figures/tables for the report.
-
-Why "paired"? The two fitness functions output values on different scales
-(RMSE ≈ [0, 255] vs ΔE2000 ≈ [0, 100]), so their raw values cannot be compared
-directly. Instead:
-
-  * Both GAs are run with an *identical* configuration; the only difference is
-    `solution_class` (`TriangleSolution` vs `PerceptualTriangleSolution`).
-  * Run `i` of both GAs uses the *same seed* → identical initial population, so
-    any difference in the result is attributable to the fitness function alone.
-  * Every run's best solution is then scored on *both* metrics
-    (`rmse_score`, `perceptual_score`) — a common scale for comparison.
-  * A paired Wilcoxon signed-rank test establishes statistical significance.
-
-Public API
-----------
-run_paired_comparison(...)  → results dict
-cross_eval_table(results)   → prints + returns the 2x2 metric table
-wilcoxon_tests(results)     → paired significance tests on both metrics
-plot_convergence(results)   → per-metric convergence (mean ± std over runs)
-plot_metric_distributions(results) → boxplots of final scores
-plot_image_comparison(results) → target | RGB-GA best | perceptual-GA best
+Both GAs run with the same config, only the fitness function differs.
+Each pair shares a seed so the initial population matches, then every best
+solution is scored on both metrics for a fair cross-comparison.
 """
 
 import numpy as np
@@ -41,33 +20,25 @@ from operators.crossover import one_point_crossover
 from operators.mutation import triangle_gaussian_mutation
 
 
-# ── Parallel worker ───────────────────────────────────────────────────────────
-
 def _run_one(solution_class, seed, ga_kwargs, target_array):
-    """Run a single GA and return its best solution scored on *both* metrics.
-
-    Top-level function so joblib's loky backend can pickle it. The target array
-    is passed in explicitly and re-bound here because each loky worker is a
-    fresh process (class attributes do not survive the fork/spawn).
-    """
+    # Top-level so joblib/loky can pickle it. target_array is re-bound
+    # because each worker is a fresh process.
     TriangleSolution.target_array = target_array
 
     best, history, _ = genetic_algorithm(
         solution_class=solution_class,
         seed=seed,
-        n_jobs=1,          # fitness eval is serial; parallelism is across runs
+        n_jobs=1,
         verbose=False,
         **ga_kwargs,
     )
     return {
         'representation': np.asarray(best.representation),
         'history': list(history),
-        'rmse': rmse_score(best),         # baseline metric
-        'deltaE': perceptual_score(best), # perceptual metric
+        'rmse': rmse_score(best),
+        'deltaE': perceptual_score(best),
     }
 
-
-# ── Experiment driver ─────────────────────────────────────────────────────────
 
 def run_paired_comparison(
     n_runs: int = 30,
@@ -83,21 +54,7 @@ def run_paired_comparison(
     elitism_n: int = 2,
     n_jobs: int = -1,
 ):
-    """
-    Run `n_runs` paired GA runs for each fitness function.
-
-    Run `i` of both fitness functions uses seed `base_seed + i`. All other GA
-    parameters are shared. Runs are executed in parallel across cores.
-
-    Returns
-    -------
-    dict with keys 'rgb' and 'perceptual', each a dict of:
-        'rmse'            : np.ndarray (n_runs,)  — final best RMSE per run
-        'deltaE'          : np.ndarray (n_runs,)  — final best ΔE2000 per run
-        'history'         : np.ndarray (n_runs, n_generations) — own-metric curve
-        'representations' : list[np.ndarray]      — best genome per run
-    Plus 'seeds' and 'meta' (the shared configuration).
-    """
+    """Run n_runs paired GA runs for each fitness function in parallel."""
     ga_kwargs = dict(
         population_size=population_size,
         n_generations=n_generations,
@@ -112,9 +69,8 @@ def run_paired_comparison(
     seeds = [base_seed + i for i in range(n_runs)]
     target_array = TriangleSolution.target_array
     if target_array is None:
-        raise Exception("No target set — call set_perceptual_target() first.")
+        raise Exception("No target set. Call set_perceptual_target() first.")
 
-    # One flat task list: every (fitness function, seed) pair, run in parallel.
     labelled_tasks = (
         [('rgb', TriangleSolution, s) for s in seeds]
         + [('perceptual', PerceptualTriangleSolution, s) for s in seeds]
@@ -140,15 +96,8 @@ def run_paired_comparison(
     return results
 
 
-# ── Reporting: table + statistics ─────────────────────────────────────────────
-
 def cross_eval_table(results: dict):
-    """Print and return the 2x2 cross-evaluation table (mean ± std over runs).
-
-    Each GA's best solutions are scored on both metrics. The expected pattern:
-    each GA wins on the metric it optimised — the report's job is to argue
-    which *looks* better to a human.
-    """
+    """Print the 2x2 cross-evaluation table (mean +/- std). Returns a dict."""
     rows = {}
     print(f"\n{'GA (optimised for)':<26} {'RMSE (RGB)':>18} {'ΔE2000 (perceptual)':>22}")
     print("-" * 68)
@@ -160,18 +109,14 @@ def cross_eval_table(results: dict):
             'deltaE_mean': float(de.mean()), 'deltaE_std': float(de.std()),
         }
         print(f"{label:<26} "
-              f"{rmse.mean():>9.3f} ± {rmse.std():<6.3f} "
-              f"{de.mean():>13.3f} ± {de.std():<6.3f}")
+              f"{rmse.mean():>9.3f} +/- {rmse.std():<6.3f} "
+              f"{de.mean():>13.3f} +/- {de.std():<6.3f}")
     print("-" * 68)
     return rows
 
 
 def wilcoxon_tests(results: dict, alpha: float = 0.05):
-    """Paired Wilcoxon signed-rank tests on both metrics.
-
-    Because runs are paired by seed, the signed-rank test is the correct
-    non-parametric test for "is one GA consistently better on this metric?".
-    """
+    """Paired Wilcoxon signed-rank tests on RMSE and ΔE2000."""
     print("\nWilcoxon signed-rank tests (paired by seed):")
     out = {}
     for metric in ('rmse', 'deltaE'):
@@ -184,26 +129,24 @@ def wilcoxon_tests(results: dict, alpha: float = 0.05):
                        'better': better, 'significant': p < alpha}
         name = 'RMSE' if metric == 'rmse' else 'ΔE2000'
         print(f"  {name:<8} W={stat:>10.2f}  p={p:.2e}  "
-              f"→ {better} lower ({verdict} at α={alpha})")
+              f"-> {better} lower ({verdict} at alpha={alpha})")
     return out
 
 
-# ── Reporting: plots ──────────────────────────────────────────────────────────
-
 def plot_convergence(results: dict, figsize=(13, 5)):
-    """Two panels: each GA's convergence on its own metric (mean ± std band)."""
+    """Each GA's convergence on its own metric, mean +/- std band."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     panels = [
         ('rgb', 'RGB-RMSE GA', 'Best RMSE', '#C44E52'),
         ('perceptual', 'Perceptual CIEDE2000 GA', 'Best ΔE2000', '#4C72B0'),
     ]
     for ax, (group, title, ylabel, colour) in zip(axes, panels):
-        hist = results[group]['history']           # (n_runs, n_generations)
+        hist = results[group]['history']
         mean, std = hist.mean(axis=0), hist.std(axis=0)
         gens = np.arange(hist.shape[1])
         ax.plot(gens, mean, color=colour, linewidth=2, label='mean')
         ax.fill_between(gens, mean - std, mean + std, color=colour, alpha=0.2,
-                        label='± 1 std')
+                        label='+/- 1 std')
         ax.set_title(title)
         ax.set_xlabel('Generation')
         ax.set_ylabel(ylabel)
@@ -215,7 +158,7 @@ def plot_convergence(results: dict, figsize=(13, 5)):
 
 
 def plot_metric_distributions(results: dict, figsize=(11, 4.5)):
-    """Boxplots of final scores: each metric, both GAs side by side."""
+    """Boxplots of final scores per metric, both GAs side by side."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     for ax, metric, name in ((axes[0], 'rmse', 'Final RMSE (RGB)'),
                              (axes[1], 'deltaE', 'Final ΔE2000 (perceptual)')):
@@ -229,17 +172,12 @@ def plot_metric_distributions(results: dict, figsize=(11, 4.5)):
 
 
 def _representative_index(results: dict, group: str, metric: str):
-    """Index of the run closest to the group's median score on `metric`."""
     scores = results[group][metric]
     return int(np.argmin(np.abs(scores - np.median(scores))))
 
 
 def plot_image_comparison(results: dict, figsize=(13, 6)):
-    """Target vs each GA's representative best image (median run of its metric).
-
-    This is the qualitative payoff: it shows what optimising a *perceptual*
-    metric actually does to the reconstructed image, versus plain RGB RMSE.
-    """
+    """Target vs each GA's median-fitness reconstruction."""
     target = np.asarray(TriangleSolution.target_array)
 
     rgb_idx = _representative_index(results, 'rgb', 'rmse')
@@ -264,6 +202,6 @@ def plot_image_comparison(results: dict, figsize=(13, 6)):
         ax.imshow(img)
         ax.set_title(title)
         ax.axis('off')
-    fig.suptitle('Representative reconstruction — median run of each GA')
+    fig.suptitle('Representative reconstruction (median run of each GA)')
     plt.tight_layout()
     plt.show()
