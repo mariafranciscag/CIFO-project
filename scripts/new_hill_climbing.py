@@ -24,7 +24,7 @@ from copy import deepcopy
 from typing import Optional
 
 from scripts.triangle_sol import TriangleSolution
-from scripts.ga_utils import get_fitness, invalidate_cache
+from scripts.ga_utils import get_fitness
 
 
 # Core perturbation helpers 

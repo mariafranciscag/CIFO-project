@@ -1,6 +1,5 @@
 import numpy as np
 from copy import deepcopy
-from scripts.triangle_sol import TriangleSolution
 from scripts.ga_utils import invalidate_cache
 
 

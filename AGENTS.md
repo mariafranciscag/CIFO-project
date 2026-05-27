@@ -19,8 +19,8 @@ This file is a handoff for future Codex chats working on this repository.
 - If the user asks for a markdown draft, do not edit files unless they explicitly say editing is allowed.
 - The user allowed editing the notebook/report in several recent requests, but this preference still matters for future markdown drafts.
 - Keep report prose concise and project-focused.
-- Exact experimental values are often provisional until the notebook is rerun. Avoid hard-coding final RMSE/p-values unless they come from the latest rerun.
-- The user is preparing a final pass, so prefer cleanup, consistency, and report usefulness over broad refactors.
+- Exact experimental values have now been filled in from the final rerun.
+- The notebook and report have undergone a final cleanup pass, including the removal of unused imports, unused variables, and old test cells.
 
 ## Important Files
 
@@ -114,8 +114,9 @@ Current `main_nb.ipynb` structure:
 8. Fitness Sharing
 9. Hill Climbing for Local Search
 10. Challenge 1, Perceptual Fitness (CIEDE2000)
-11. Best Candidate vs. Target
-12. Save Best Result
+11. Save Best Result
+
+*(A fully working and anchored Table of Contents has been automatically injected into the notebook itself).*
 
 The Genetic Operators section contains clickable links to operator definitions in `.py` files.
 
@@ -143,9 +144,9 @@ The Genetic Operators section contains clickable links to operator definitions i
 8. Conclusion
 9. References
 10. Appendix: Reproducibility Notes
-11. Appendix: Figures and Tables to Add
+11. Appendix: Supplementary Figures and Tables
 
-The report intentionally contains `TODO` placeholders for final RMSE values, p-values, plot references, and perceptual-fitness results because the user still plans to rerun everything.
+The report has been populated with the final values from the `main_nb.ipynb` runs. The exact RMSE, corrected paired-test p-values for the perceptual comparison, and perceptual-fitness cross-evaluations are filled in.
 
 ## Main Technical Decisions
 
@@ -213,29 +214,18 @@ selection = tournament_selection(tournament_size=10)
 crossover = uniform_crossover
 crossover_rate = 0.9
 mutation = triangle_gaussian_mutation(sigma_vertex=5, sigma_colour=20)
-mutation_rate = 0.05
+mutation_rate = 0.01
 elitism_n = 2
-mutation_rate_decay = None
+mutation_rate_decay = 0.0001
 ```
 
-The user still intends to rerun the final experiments, so treat numeric results as provisional.
+The final long run used mild mutation-rate decay because full 8000-generation replicated tests for every mutation-rate setting were computationally expensive. The smaller statistical tests should be described as tuning evidence, not exact replication of the final long-run budget.
 
-## Known Issues and TODOs
+## Remaining Checks
 
-- Rerun notebook cells after recent code edits; use `%autoreload 2` or `importlib.reload`.
-- Refresh statistical result pickle files after code changes.
-- Replace all `TODO` placeholders in the report before final export.
-- Insert final RMSE, final convergence plot, and final `best_result.png`.
-- Run the paired perceptual comparison and add:
-  - cross-evaluation table
-  - Wilcoxon p-values
-  - convergence plots
-  - metric distributions
-  - visual comparison
-- Decide whether hill climbing is part of the final result or only an additional experiment.
-- If using loaded old pickle files, remember result keys may differ:
-  - old saved results may have callable keys
-  - new saved results always use string keys
+- Ensure the final PDF report includes `best_result.png` and convergence plots matching the filled text values.
+- Hill climbing is reported as the post-processing step that produces the submitted `best_result.png`; keep the GA-only and post-polish RMSE values distinct.
+- `load_statistical_results()` normalizes older pickle files whose saved result keys were quoted strings.
 - After saving statistical results with the new helper, plot labels should usually be passed explicitly.
 - The perceptual GA is naturally slower; only low-risk micro-optimizations should be made unless the user asks for deeper algorithmic changes.
 

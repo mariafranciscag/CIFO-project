@@ -441,10 +441,10 @@ def plot_statistical_comparison(
     
     colors = plt.cm.Set1(np.linspace(0, 1, len(results)))
     
-    for idx, (parameter_value, stats) in enumerate(results.items()):
-        avg_fitness = stats["median_history"] if statistic == "median" else stats["mean_history"]
-        std_fitness = stats["std_history"]
-        x_values = _get_plot_x_values(stats, x_axis=x_axis)
+    for idx, (parameter_value, stat_vals) in enumerate(results.items()):
+        avg_fitness = stat_vals["median_history"] if statistic == "median" else stat_vals["mean_history"]
+        std_fitness = stat_vals["std_history"]
+        x_values = _get_plot_x_values(stat_vals, x_axis=x_axis)
         ax.plot(x_values, avg_fitness, label=labels[idx], linewidth=2.5, 
                 marker='o', markersize=3, color=colors[idx])
         if statistic != "median":
@@ -493,22 +493,26 @@ def run_statistical_test(values_a, values_b, name_a="A", name_b="B", paired=Fals
     normal_b = shapiro_b.pvalue >= alpha
 
     # 2. Choose comparison test
-    if normal_a and normal_b:
-        test = stats.ttest_ind(values_a, values_b, equal_var=False)
-        test_name = "Welch t-test"
-    else:
-        if paired:
+    if paired:
+        if normal_a and normal_b:
+            test = stats.ttest_rel(values_a, values_b)
+            test_name = "Paired t-test"
+        else:
             test = stats.wilcoxon(values_a, values_b)
             test_name = "Wilcoxon signed-rank test"
+    else:
+        if normal_a and normal_b:
+            test = stats.ttest_ind(values_a, values_b, equal_var=False)
+            test_name = "Welch t-test"
         else:
             test = stats.mannwhitneyu(values_a, values_b, alternative="two-sided")
-            test_name = "Mann-Whitney U / Wilcoxon rank-sum test"
+            test_name = "Mann-Whitney U test"
 
     print(f"\n{test_name}")
-    print(f"p-value: {test.pvalue:.4f}")
+    print(f"p-value: {test.pvalue:.6g}")
 
-    print(f"\n{name_a} mean final RMSE: {values_a.mean():.4f}")
-    print(f"{name_b} mean final RMSE: {values_b.mean():.4f}")
+    print(f"\n{name_a} mean final score: {values_a.mean():.4f}")
+    print(f"{name_b} mean final score: {values_b.mean():.4f}")
 
     if test.pvalue < alpha:
         print("Difference is statistically significant.")
@@ -696,12 +700,38 @@ def save_statistical_results(results: dict, filepath: str):
         pickle.dump(serializable_results, f)
 
 
+def _unquote_result_key(key):
+    if isinstance(key, str) and len(key) >= 2 and key[0] == key[-1] == "'":
+        return key[1:-1]
+    return key
+
+
+def _normalize_loaded_result_keys(value):
+    if isinstance(value, dict):
+        return {
+            _unquote_result_key(key): _normalize_loaded_result_keys(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [_normalize_loaded_result_keys(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_normalize_loaded_result_keys(item) for item in value)
+
+    return value
+
+
 def load_statistical_results(filepath: str) -> dict:
     """
     Load saved statistical comparison results.
+
+    Some older result files were saved after applying key sanitization
+    recursively, which left inner result keys quoted as strings such as
+    ``'mean_history'``. Normalize them on load so old notebooks remain usable.
     """
     with open(filepath, "rb") as f:
-        return pickle.load(f)
+        return _normalize_loaded_result_keys(pickle.load(f))
 
 
 def plot_statistical_comparison_interactive(
@@ -749,10 +779,10 @@ def plot_statistical_comparison_interactive(
     else:
         fig = go.Figure()
 
-    for idx, (parameter_value, stats) in enumerate(results.items()):
-        avg_fitness = np.asarray(stats["median_history"] if statistic == "median" else stats["mean_history"])
-        std_fitness = np.asarray(stats["std_history"])
-        x_values = _get_plot_x_values(stats, x_axis=x_axis)
+    for idx, (parameter_value, stat_vals) in enumerate(results.items()):
+        avg_fitness = np.asarray(stat_vals["median_history"] if statistic == "median" else stat_vals["mean_history"])
+        std_fitness = np.asarray(stat_vals["std_history"])
+        x_values = _get_plot_x_values(stat_vals, x_axis=x_axis)
 
         label = labels[idx]
         color = colors[idx % len(colors)]

@@ -35,11 +35,11 @@ def triangle_gaussian_mutation(individual: TriangleSolution, mutation_rate: floa
             # Mutate vertices (genes 0-5)
             for i in [0, 2, 4]:
                 rep[base + i] = np.clip(
-                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, 300
+                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, individual.img_width
                 )
             for i in [1, 3, 5]:
                 rep[base + i] = np.clip(
-                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, 400
+                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, individual.img_height
                 )
             # Mutate colours (genes 6-9)
             for i in range(6, 10):
@@ -122,11 +122,11 @@ def triangle_gaussian_vertex_mutation(individual: TriangleSolution, mutation_rat
         if np.random.random() < triangle_mutation_rate:
             for i in [0, 2, 4]:
                 rep[base + i] = np.clip(
-                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, 300
+                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, individual.img_width
                 )
             for i in [1, 3, 5]:
                 rep[base + i] = np.clip(
-                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, 400
+                    rep[base + i] + np.random.normal(0, sigma_vertex), 0, individual.img_height
                 )
         
         # If adaptive, evolve the mutation rate itself
