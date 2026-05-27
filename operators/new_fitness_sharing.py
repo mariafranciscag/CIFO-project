@@ -164,11 +164,11 @@ class AutomaticFitnessSharingSelection:
     """
 
     def __init__(self, sigma_share: float = 50.0, alpha: float = 1.0,
-                 selection_fn=None):
+                 selection_function=None):
         self.sigma_share = sigma_share
         self.alpha = alpha
         # default to tournament if nothing passed
-        self.selection_fn = selection_fn or tournament_selection
+        self.selection_function = selection_function or tournament_selection
         self._current_gen = 0         
         self._last_applied_gen = -1  
 
@@ -190,7 +190,7 @@ class AutomaticFitnessSharingSelection:
 
     def __call__(self, population):
         self._ensure_sharing_applied(population)
-        return self.selection_fn(population)
+        return self.selection_function(population)
 
 
 # AdvancedFitnessSharingSelection 

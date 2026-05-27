@@ -16,6 +16,7 @@ from plotly.subplots import make_subplots
 from operators.crossover import one_point_crossover
 from operators.mutation import triangle_gaussian_mutation
 from operators.selection import tournament_selection
+from operators.new_fitness_sharing import population_diversity_report
 from scripts.ga import genetic_algorithm
 from scripts.triangle_sol import TriangleSolution
 
@@ -100,14 +101,23 @@ def _run_single_ga(
     progress_queue=None,
     seed: int | None = None,
     return_representation: bool = False,
+    return_diversity: bool = False,
+    diversity_interval: int = 10,
 ):
     """Helper function for parallel execution of a single GA run."""
     # Re-initialize target array in worker process (required for loky backend)
     TriangleSolution.target_array = target_array
+    diversity_log = []
 
     def report_generation(*_):
+        if hasattr(selection_function, 'next_generation'):
+            selection_function.next_generation()
         if progress_queue is not None:
             progress_queue.put(population_size)
+
+    def diversity_callback(gen, population):
+        if gen % diversity_interval == 0:
+            diversity_log.append({'gen': gen, **population_diversity_report(population)})
 
     best, hist, _ = genetic_algorithm(
         solution_class=solution_class,
@@ -123,11 +133,15 @@ def _run_single_ga(
         n_jobs=1,  # Single-threaded fitness eval to avoid nesting
         verbose=False,
         generation_callback=report_generation,
+        population_callback=diversity_callback if return_diversity else None,
         seed=seed,
     )
+    result = [hist, best.fitness()]
     if return_representation:
-        return hist, best.fitness(), np.asarray(best.representation)
-    return hist, best.fitness()
+        result.append(np.asarray(best.representation))
+    if return_diversity:
+        result.append(diversity_log)
+    return tuple(result)
 
 
 def _calculate_population_size(parameter_value, parameter_to_test, eval_budget, default_population_size=50):
@@ -221,6 +235,8 @@ def run_ga_statistical_comparison(
     fixed_params: dict | None = None,
     base_seed: int | None = None,
     return_representations: bool = False,
+    return_diversity: bool = False,
+    diversity_interval: int = 10,
 ):
     """
     Run GA multiple times with different parameter values and compute average fitness and std dev.
@@ -327,6 +343,8 @@ def run_ga_statistical_comparison(
                             seed=(base_seed + i_run) if base_seed is not None else None,
                         ),
                         return_representation=return_representations,
+                        return_diversity=return_diversity,
+                        diversity_interval=diversity_interval,
                     )
                     for parameter_value, i_run in tasks
                 )
@@ -351,13 +369,16 @@ def run_ga_statistical_comparison(
         actual_population_size = run_kwargs["population_size"]
         actual_n_generations = run_kwargs["n_generations"]
         
+        diversity_logs_for_param = []
         for i_run in range(n_runs):
-            output = run_outputs[i_param * n_runs + i_run]
+            output = list(run_outputs[i_param * n_runs + i_run])
+            history = output.pop(0)
+            final_best = output.pop(0)
             if return_representations:
-                history, final_best, representation = output
-                representations_for_param.append(representation)
-            else:
-                history, final_best = output
+                representations_for_param.append(output.pop(0))
+            if return_diversity:
+                diversity_logs_for_param.append(output.pop(0))
+                
             histories_for_param.append(history)
             final_values_for_param.append(final_best)
         
@@ -378,6 +399,17 @@ def run_ga_statistical_comparison(
         }
         if return_representations:
             result_entry["representations"] = representations_for_param
+        if return_diversity and len(diversity_logs_for_param) > 0:
+            mean_div_log = []
+            num_points = len(diversity_logs_for_param[0])
+            metrics = [k for k in diversity_logs_for_param[0][0].keys() if k != 'gen']
+            for pt in range(num_points):
+                point_dict = {'gen': diversity_logs_for_param[0][pt]['gen']}
+                for key in metrics:
+                    point_dict[key] = float(np.mean([d[pt][key] for d in diversity_logs_for_param]))
+                mean_div_log.append(point_dict)
+            result_entry["mean_diversity_history"] = mean_div_log
+            
         results[parameter_value] = result_entry
     
     return results
@@ -1015,3 +1047,82 @@ def plot_image_comparison(
     fig.suptitle("Representative reconstruction — median run of each GA")
     plt.tight_layout()
     plt.show()
+
+
+def plot_diversity_statistical_comparison_interactive(
+    results: dict,
+    labels: list | None = None,
+    title: str = "Statistical Comparison: Diversity Metrics"
+):
+    """
+    Plot interactive subplots for each diversity metric across compared parameters.
+    Requires that the results dictionary contains 'mean_diversity_history'.
+    """
+    keys = list(results.keys())
+    if labels is None:
+        labels = [str(k) for k in keys]
+
+    # Filter to only results that have diversity tracking
+    valid_keys = [k for k in keys if "mean_diversity_history" in results[k] and len(results[k]["mean_diversity_history"]) > 0]
+    if not valid_keys:
+        print("No diversity logs found in the provided results.")
+        return
+
+    # Extract metrics from the first valid result
+    first_history = results[valid_keys[0]]["mean_diversity_history"]
+    metrics = [k for k in first_history[0].keys() if k != 'gen']
+    n_metrics = len(metrics)
+
+    # Calculate grid dimensions (up to 2 columns)
+    cols = 2
+    rows = (n_metrics + 1) // 2
+
+    fig = make_subplots(
+        rows=rows, 
+        cols=cols, 
+        subplot_titles=[m.replace("_", " ").title() for m in metrics]
+    )
+
+    colors = qualitative.Plotly
+
+    for i_metric, metric in enumerate(metrics):
+        r = (i_metric // cols) + 1
+        c = (i_metric % cols) + 1
+
+        for i_k, key in enumerate(valid_keys):
+            data = results[key]["mean_diversity_history"]
+            gens = [d["gen"] for d in data]
+            vals = [d[metric] for d in data]
+
+            show_legend = (i_metric == 0) # Only show legend once per label
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=gens,
+                    y=vals,
+                    mode="lines",
+                    name=labels[keys.index(key)],
+                    legendgroup=labels[keys.index(key)],
+                    showlegend=show_legend,
+                    line=dict(color=colors[i_k % len(colors)], width=2),
+                ),
+                row=r,
+                col=c
+            )
+            
+            fig.update_xaxes(title_text="Generation", row=r, col=c)
+
+    fig.update_layout(
+        height=300 * rows,
+        title_text=title,
+        template="plotly_white",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    fig.show()
