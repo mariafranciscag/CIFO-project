@@ -47,9 +47,9 @@ def rgb_to_lab(rgb_arr):
     -------
     np.ndarray, shape (H, W, 3), dtype float64 — the image in CIELAB space.
     """
-    rgb = np.asarray(rgb_arr, dtype=np.float64)[:, :, :3]
+    rgb = np.asarray(rgb_arr, dtype=np.float32)[:, :, :3]
     # skimage expects sRGB in [0, 1]; it applies the sRGB gamma internally.
-    return rgb2lab(rgb / 255.0)
+    return rgb2lab(rgb / 255.0).astype(np.float32, copy=False)
 
 
 # ── Target handling ───────────────────────────────────────────────────────────
@@ -104,7 +104,8 @@ class PerceptualTriangleSolution(TriangleSolution):
         if self._fitness is not None:
             return self._fitness
 
-        rendered_lab = rgb_to_lab(np.asarray(self._render()))
+        rendered_rgb = np.asarray(self._render(), dtype=np.float32)[:, :, :3]
+        rendered_lab = rgb_to_lab(rendered_rgb)
         delta_e = deltaE_ciede2000(self._get_target_lab(), rendered_lab)
         self._fitness = float(np.mean(delta_e))
         return self._fitness
@@ -139,5 +140,6 @@ def perceptual_score(solution):
     target_lab = (PerceptualTriangleSolution.target_lab
                   if PerceptualTriangleSolution.target_lab is not None
                   else rgb_to_lab(solution.target_array))
-    rendered_lab = rgb_to_lab(np.asarray(solution.get_image()))
+    rendered_rgb = np.asarray(solution.get_image(), dtype=np.float32)[:, :, :3]
+    rendered_lab = rgb_to_lab(rendered_rgb)
     return float(np.mean(deltaE_ciede2000(target_lab, rendered_lab)))

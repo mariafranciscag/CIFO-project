@@ -8,6 +8,7 @@ from .ga_utils import get_fitness, evaluate_population
 from operators.selection import tournament_selection
 from operators.crossover import one_point_crossover
 from operators.mutation import triangle_gaussian_mutation
+from .perceptual_fitness import PerceptualTriangleSolution
 
 
 def genetic_algorithm(
@@ -57,6 +58,8 @@ def genetic_algorithm(
     population = evaluate_population(population, n_jobs=n_jobs)
     population.sort(key=lambda ind: get_fitness(ind))
     current_mutation_rate = mutation_rate
+    
+    fitness_type = "ΔE2000" if solution_class == PerceptualTriangleSolution else "RMSE"
 
     history = []
     avg_history = []
@@ -102,8 +105,8 @@ def genetic_algorithm(
             ]))
 
         if verbose and (gen % verbose_every == 0 or gen == n_generations - 1):
-            print(f"Gen {gen:>4d} | best RMSE: {best_fitness:.4f} | "
-                  f"avg RMSE: {avg_fitness:.4f} | "
+            print(f"Gen {gen:>4d} | best {fitness_type}: {best_fitness:.4f} | "
+                  f"avg {fitness_type}: {avg_fitness:.4f} | "
                   f"mut rate: {current_mutation_rate:.5f}")
         
         if generation_callback is not None:

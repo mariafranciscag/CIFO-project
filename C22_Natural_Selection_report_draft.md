@@ -10,13 +10,27 @@
 
 ## 1. Introduction
 
-The goal of this project was to approximate the provided 300 x 400 image of Vermeer's *Girl with a Pearl Earring* using exactly 100 colored triangles. We focused on the third additional challenge in the project statement: evaluating the contribution of GA components to the overall result. The report therefore emphasizes the design choices behind the representation, fitness function, selection, crossover, mutation, and experimental comparison, rather than re-explaining the general GA workflow covered in class.
+The goal of this project is to approximate the provided 300 x 400 image of Vermeer's *Girl with a Pearl Earring* using exactly 100 colored triangles. This is an image-approximation optimization problem: each candidate solution defines a rendered image, and the algorithm searches for triangle configurations that make the rendered image as close as possible to the target.
 
-Our final submitted configuration uses a generational GA with elitism, tournament selection, uniform whole-triangle crossover, Gaussian mutation, and a population of 800 individuals evolved for 2000 generations. The best recorded solution reached **RMSE 17.9061**, improving substantially over the initial baseline run (**RMSE 39.2180**).
+The main project objective follows the statement requirement: minimize the pixel-wise RMSE between the rendered candidate and the original image. The selected additional challenge is **Challenge 1: using an alternative fitness function**. For that challenge, we keep the same GA structure and representation, but replace RMSE with a perceptual color-difference metric based on CIEDE2000.
 
-## 2. Representation and Fitness
+The report is structured as follows. First, we define the optimization problem and representation. Then, we describe the implemented genetic operators. Next, we present the experimental methodology used to choose operators and hyperparameters. Finally, we report the current final GA configuration, the perceptual-fitness challenge, and additional experiments such as fitness sharing and hill climbing.
 
-### 2.1 Candidate Representation
+Exact RMSE values, p-values, and final plots should be refreshed after the last notebook rerun. The conclusions in this draft reflect the current state of the project, while numerical placeholders marked `TODO` should be replaced before export.
+
+## 2. Problem Definition
+
+### 2.1 Formal Optimization Problem
+
+The optimization problem is to find a sequence of 100 semi-transparent triangles that minimizes the difference between the rendered candidate image and the target image. Let `x` be a candidate genotype and `render(x)` be the image produced by drawing its triangles in order. The main objective is:
+
+```text
+minimize RMSE(render(x), target)
+```
+
+This is a continuous, bounded optimization problem with stochastic search. Coordinates, colors, and alpha values are numerical genes, and small perturbations can produce meaningful local changes in the image. At the same time, the rendering order creates strong interactions between genes because later triangles can cover earlier ones.
+
+### 2.2 Solution Representation
 
 Each individual is an ordered list of 100 triangles. A triangle is encoded by 10 genes:
 
@@ -24,9 +38,7 @@ Each individual is an ordered list of 100 triangles. A triangle is encoded by 10
 [x1, y1, x2, y2, x3, y3, R, G, B, A]
 ```
 
-The six coordinate genes are stored directly in image pixels, with `x` bounded by the image width and `y` bounded by the image height. The four color genes store RGBA values in `[0, 255]`. The order of the triangles is part of the representation because the image is rendered sequentially: later triangles can cover earlier ones.
-
-We considered two main representation alternatives. The first was to store normalized coordinates in `[0, 1]`; this would make distance calculations more balanced, but it would also require conversion every time an individual is rendered and would make mutation less directly interpretable in pixel units. We kept direct pixel coordinates because the rendering canvas and mutation step sizes are naturally expressed in pixels. The second alternative was to use opaque RGB triangles only. We kept alpha because transparent triangles gave the representation more expressive power, especially for soft transitions in the face, scarf, and background. This increases the search space, but the visual gain justified the extra gene.
+The six coordinate genes are stored in image-pixel units and clipped to the canvas bounds. The color genes store RGBA values in `[0, 255]`. The order of triangles is part of the genotype because the image is rendered sequentially: later triangles can occlude earlier triangles.
 
 An adaptive representation was also implemented with an eleventh gene per triangle:
 
@@ -34,117 +46,235 @@ An adaptive representation was also implemented with an eleventh gene per triang
 [x1, y1, x2, y2, x3, y3, R, G, B, A, mutation_rate]
 ```
 
-This allowed us to test whether mutation rates should be evolved per triangle. It was useful as an experimental variant, but the final run used the simpler fixed-rate representation because it was easier to control and produced the best recorded long-run result.
+This representation was used to test whether mutation rates should evolve inside the genotype. It remains an experimental variant; the current final GA uses the simpler fixed-rate representation because it is easier to control and performed better in the current comparison.
 
-### 2.2 Fitness Function
+### 2.3 Search Space
 
-The project statement fixes the fitness measure as pixel-by-pixel RMSE between the original image and the rendered candidate. We followed that requirement directly:
+The search space is extremely large. Even ignoring the continuous nature of coordinates and colors, each candidate contains 100 triangles and each triangle has 10 bounded genes. With integer pixel coordinates and 8-bit color channels, the number of possible candidates is far beyond exhaustive search:
+
+```text
+(300 * 400)^3 * 256^4 possibilities per triangle
+```
+
+raised to 100 ordered triangles. The rendering order makes the space even more difficult because moving or recoloring one triangle can change the visible contribution of many others through occlusion. This scale motivates the use of a Genetic Algorithm rather than exhaustive search or random sampling.
+
+### 2.4 RMSE Fitness Function
+
+The main project metric is the pixel-wise RMSE between the rendered candidate and the target:
 
 ```text
 RMSE = sqrt(mean((candidate - target)^2))
 ```
 
-This choice has one important consequence for interpretation: it rewards exact pixel similarity, not necessarily human-perceived similarity. Some visually plausible triangle arrangements may still have worse RMSE if local colors or edges are shifted. We did not implement an alternative perceptual color metric because our selected challenge was the evaluation of GA components, not the color-distance challenge. To keep the fitness evaluation efficient, each candidate caches its RMSE and populations are evaluated in parallel using `joblib`.
+Lower RMSE means a better solution. This metric is computationally simple and matches the project statement, but it measures numerical pixel similarity rather than perceived visual similarity. Each individual caches its fitness value, and populations are evaluated in parallel using `joblib`.
 
-## 3. GA Design Choices
+## 3. Genetic Operators
 
-The implementation follows a generational replacement structure with protected elitism. At each generation, the best `elitism_n` individuals are copied unchanged, and the remaining population is produced through selection, crossover, and mutation. This is slightly more conservative than pure generational replacement, but it was important for this problem because a good image can be damaged easily by perturbing a few high-impact triangles.
+The notebook separates the definition of genetic operators from the statistical tests used to choose among them. This follows a clearer report structure: first define the design space, then justify the final choices empirically.
 
 ### 3.1 Selection
 
-We implemented roulette-wheel, rank-based, tournament, and fitness-sharing-based selection variants.
+Selection chooses parents based on fitness. Because this is a minimization problem, lower RMSE corresponds to better fitness.
 
-Roulette-wheel selection was adapted to minimization by inverting RMSE. We discarded it for the final run because RMSE values in later generations become close together, which weakens the contrast between individuals and makes the selection pressure less controllable. Rank-based selection avoids dependence on raw RMSE gaps and preserves diversity better, but its pressure is less direct to tune in our implementation.
+- **[Roulette-wheel selection](operators/selection.py#L5):** uses inverted RMSE values so lower-error individuals have higher selection probability.
+- **[Rank-based selection](operators/selection.py#L20):** assigns probabilities according to sorted rank rather than raw RMSE differences.
+- **[Tournament selection](operators/selection.py#L36):** samples a subset of individuals and selects the best one; tournament size controls selection pressure.
+- **[Fitness sharing](operators/new_fitness_sharing.py#L86):** adjusts fitness during selection by penalizing individuals in crowded regions of genotype space.
 
-Tournament selection was selected for the final configuration. The reason was practical and methodological: the tournament size gives a clear way to control selection pressure. The final implementation samples tournament contestants **with replacement**, which keeps even the weakest individual with a non-zero probability of being selected, matching the selection principle discussed in the course chapter. We tested several tournament sizes and used tournament size 10 in the final run as a compromise between weak pressure, which slowed improvement, and excessive pressure, which risked premature convergence.
-
-Fitness sharing was also implemented to penalize crowded regions of the genotype space. The first version used raw representation distances; later notebook experiments introduced normalized distances because coordinates and color channels have different numerical scales. Fitness sharing was a valuable exploration mechanism, but it added computational overhead and did not outperform the simpler tournament setup in the best recorded final run, so it was not kept as the final selection mechanism.
+Tournament selection is the current final choice because its pressure is easy to tune. The notebook compares several tournament sizes and currently keeps tournament size 10.
 
 ### 3.2 Crossover
 
-We implemented one-point, two-point, uniform, and geometric crossover.
+Crossover recombines parent genotypes. Since each group of genes defines a complete triangle, the discrete crossover operators preserve triangle boundaries instead of cutting inside a triangle.
 
-The first three operators were adapted to work at **triangle boundaries** instead of arbitrary gene positions. This was a deliberate adaptation to the problem representation. Splitting inside a triangle can combine unrelated vertices, color, and alpha values, producing offspring that inherit less meaningful visual structure. Whole-triangle crossover treats each triangle as a coherent drawing primitive while still recombining larger parts of the image.
+- **[One-point crossover](operators/crossover.py#L7):** swaps the suffix of two parents after a randomly chosen triangle boundary.
+- **[Two-point crossover](operators/crossover.py#L35):** swaps a middle segment between two triangle-boundary cut points.
+- **[Uniform crossover](operators/crossover.py#L72):** independently chooses, for each triangle position, which parent contributes that triangle.
+- **[Geometric crossover](operators/crossover.py#L107):** creates one real-valued offspring by taking a weighted combination of parent genes and clipping values to valid coordinate and color ranges.
 
-Uniform whole-triangle crossover was chosen for the final run. One-point and two-point crossover preserve longer contiguous blocks of the drawing order, but useful triangles are not guaranteed to be located near each other in the genotype. Uniform crossover mixes triangles more freely, which helped recombine partial solutions across the whole canvas. The main risk is disrupting groups of triangles that work together visually; elitism and the use of whole-triangle units reduced this risk.
+Uniform whole-triangle crossover is the current final choice. One-point and two-point crossover preserve larger blocks of drawing order, but useful triangles are not guaranteed to be adjacent in the genotype. Uniform crossover mixes partial solutions more freely while still respecting triangle boundaries.
 
-Geometric crossover was implemented after revisiting the continuous-optimization part of the GA chapter. It creates offspring by taking weighted averages of parent genes and clipping values to valid bounds. This is well aligned with a real-valued representation, but for this image problem it can also average two visually distinct triangles into an intermediate triangle that is not useful. For that reason, it was treated as an experimental alternative rather than the final choice.
-
-The strongest statistical result currently stored in the notebook is the comparison between one-point and uniform crossover: both samples passed the normality check, and Welch's t-test gave **p = 0.0018**, with mean final RMSE **39.1120** for one-point and **35.3974** for uniform over 30 runs. This supports the final choice of uniform crossover.
+Geometric crossover is conceptually appropriate for continuous representations, but in this image problem averaging two triangles can also create an intermediate triangle that is less visually useful than either parent. It is kept as an experimental operator.
 
 ### 3.3 Mutation
 
-We implemented six mutation variants:
+Mutation introduces new variation by modifying existing individuals. Since the representation is bounded and mostly continuous, mutation operators either perturb genes locally or reset parts of the representation.
 
 | Mutation operator | Intended contribution |
 |---|---|
-| Full Gaussian mutation | Jointly refines geometry and RGBA values. |
-| Color-only Gaussian mutation | Improves colors without disturbing triangle placement. |
-| Vertex-only Gaussian mutation | Adjusts shapes without changing colors. |
-| Per-gene reset mutation | Injects random gene-level novelty. |
-| Per-triangle reset mutation | Replaces entire triangles for stronger exploration. |
-| Layer-swap mutation | Changes occlusion order without changing triangle content. |
+| [Full Gaussian mutation](operators/mutation.py#L6) | Jointly refines geometry and RGBA values. |
+| [Color-only Gaussian mutation](operators/mutation.py#L61) | Changes RGBA values without moving triangle vertices. |
+| [Vertex-only Gaussian mutation](operators/mutation.py#L100) | Changes triangle geometry without changing color. |
+| [Per-gene reset mutation](operators/mutation.py#L142) | Randomly resets individual genes. |
+| [Per-triangle reset mutation](operators/mutation.py#L183) | Replaces complete triangles for stronger exploration. |
+| [Layer-swap mutation](operators/mutation.py#L227) | Swaps triangle drawing order, changing occlusion without changing shape or color. |
+| [Geometric mutation](operators/mutation.py#L274) | Applies bounded uniform perturbations following the box-mutation idea for continuous optimization. |
 
-The final run used full Gaussian mutation. The image approximation problem benefits from small continuous changes once the main structure is visible. Gaussian mutation behaves like a local search step in the real-valued genotype: coordinates and color values are perturbed and then clipped to valid ranges. Color-only and vertex-only mutation were too narrow as standalone operators because both shape and color need to co-evolve. Reset mutations were useful for exploration but too destructive once good triangles had emerged. Layer-swap mutation addressed a real issue, namely occlusion order, but it cannot improve color or geometry by itself, so it was not used as the only mutation operator in the final run.
+The current final choice is full Gaussian mutation with tuned vertex and color sigmas. It provides local refinement for both triangle geometry and color, which is important once the main visual structure has emerged.
 
-We also tested mutation-rate decay and the self-adaptive mutation-rate representation. High initial mutation with decay improved early movement in short runs, but the best recorded final long run used a fixed rate of **0.01**. The final curve was still improving late in the run, which suggests that this rate preserved enough variation for refinement without repeatedly destroying useful triangles.
+## 4. Performance Analysis
 
-## 4. Experimental Methodology
+### 4.1 Experimental Methodology
 
-Following the experimental-comparison guidance from the course chapter, we avoided drawing conclusions from a single stochastic run. The notebook includes a helper that repeats each configuration over independent runs, stores the best RMSE history for each run, and plots the average best fitness with standard-deviation bands. The updated helper also stores the final best RMSE values per run and includes a normality check followed by either a Welch t-test or a non-parametric alternative.
+The notebook compares operators and hyperparameters using repeated independent GA runs. Since GA performance depends on random initialization and stochastic operators, decisions are based on distributions of results rather than on a single execution.
 
-The selected project challenge was the evaluation of GA components. We compared:
+For each configuration, the helper records best-fitness histories and final best RMSE values. Plots can show either average best fitness (ABF) or median best fitness (MBF), with standard-deviation bands. When comparing different population sizes, performance is plotted against cumulative fitness evaluations rather than generations, because larger populations perform more evaluations per generation.
+
+When two configurations are close, the notebook performs statistical tests on the final best RMSE values. It first applies a normality test. If both samples are approximately normal, Welch's t-test is used. Otherwise, independent samples are compared with the Mann-Whitney U test, while paired samples use the Wilcoxon signed-rank test. The significance threshold is `alpha = 0.05`.
+
+### 4.2 Operator Selection
+
+The operator comparison covers selection, crossover, and mutation:
 
 | Component | Values compared |
 |---|---|
-| Selection | Roulette wheel, rank-based, tournament with multiple tournament sizes |
+| Selection | Roulette wheel, rank-based, tournament with several tournament sizes |
 | Crossover | One-point, two-point, uniform, geometric |
-| Mutation | Full Gaussian, color Gaussian, vertex Gaussian, gene reset, triangle reset, layer swap |
-| Mutation-rate strategy | Fixed rate, decay schedules, self-adaptive mutation-rate gene |
-| Population size | 200, 400, 800, 1500 |
+| Mutation operator | Full Gaussian, color Gaussian, vertex Gaussian, gene reset, triangle reset, layer swap, geometric |
 
-One caveat is important. The chapter warns that configurations with different population sizes should be compared by computational effort, commonly the number of fitness evaluations, rather than by generation count alone. Our population-size experiment is therefore best interpreted as exploratory tuning, not as a fully fair performance comparison. For the operator comparisons, the population size and number of generations were kept fixed, so comparing average best RMSE by generation is methodologically cleaner.
+The current conclusion is that tournament selection, uniform whole-triangle crossover, and full Gaussian mutation form the strongest and most stable base configuration. Tournament selection gives direct control over selection pressure, uniform crossover recombines triangles without splitting them, and Gaussian mutation performs useful local refinement in the continuous genotype.
 
-The baseline configuration used population 50, 200 generations, tournament selection, one-point crossover, Gaussian mutation, crossover rate 0.9, mutation rate 0.02, and elitism 2. It reached **RMSE 39.2180**. Larger and more refined configurations improved strongly: a fitness-sharing run with population 800 and 1000 generations reached **RMSE 22.4320**, and a normalized-sharing / layer-swap variant reached **RMSE 22.3807**. The final configuration without sharing but with uniform crossover, tournament size 10, population 800, and 2000 generations reached **RMSE 17.9061**.
+### 4.3 Hyperparameter Tuning
 
-**TODO before final PDF:** export the comparison plots from the notebook and add one short interpretation below each figure. The most important figures are crossover comparison, mutation comparison, mutation-rate strategy, and final convergence. For population size, label it explicitly as an exploratory comparison unless the runs are redone using equal fitness-evaluation budgets.
+After selecting the main operator families, the notebook tunes key hyperparameters:
 
-## 5. Final Result
+| Hyperparameter | Values compared |
+|---|---|
+| Crossover rate | 0.90, 0.80, 0.70, 0.50, 0.30 |
+| Mutation rate | 0.50, 0.20, 0.10, 0.05, 0.02, 0.01 |
+| Gaussian sigma | `sigma_vertex` and `sigma_colour` grids |
+| Mutation adaptation | Fixed rate, decay schedules, self-adaptive mutation-rate gene |
+| Elitism | Several elite sizes |
 
-The final image was saved as `best_result.png`.
+The current final settings are:
+
+- Crossover rate 0.9.
+- `sigma_vertex = 5` and `sigma_colour = 20`.
+- Mutation rate 0.05.
+- Elite size 2.
+- No mutation-rate decay.
+
+Exact p-values and final mean/median RMSE values should be regenerated before the final PDF.
+
+### 4.4 Population Size and Evaluation Budget
+
+Population size must be compared carefully. A run with a larger population performs more fitness evaluations per generation, so plotting only by generation gives larger populations an unfair computational budget. The notebook was updated so population-size comparisons use equal or comparable fitness-evaluation budgets and plot ABF/MBF against cumulative evaluations.
+
+The current population-size comparison considers 200, 400, 800, and 1500 individuals. The current final configuration uses population size 200 for more generations, giving it the intended evaluation budget while keeping each generation relatively cheap.
+
+## 5. Final GA Result
+
+The current final-run cell uses:
+
+```text
+population_size = 200
+n_generations = 8000
+selection = tournament_selection(tournament_size=10)
+crossover = uniform_crossover
+crossover_rate = 0.9
+mutation = triangle_gaussian_mutation(sigma_vertex=5, sigma_colour=20)
+mutation_rate = 0.05
+elitism_n = 2
+mutation_rate_decay = None
+```
+
+This configuration follows from the statistical comparison while using the intended total evaluation budget. The final RMSE, convergence plot, and saved image should be updated after the last full rerun.
+
+**TODO before final PDF:** insert the final RMSE, final convergence plot, and final `best_result.png` generated by the rerun.
 
 ![Final 100-triangle approximation](best_result.png)
 
-The final candidate captures the main composition of the painting: dark background, face region, head covering, clothing, and the approximate pearl location. Some local details remain imprecise, but this is consistent with the constraint of using only 100 triangles and optimizing pixel RMSE rather than semantic similarity.
+## 6. Challenge 1: Perceptual Fitness
 
-The final RMSE was **17.9061**. Compared with the baseline RMSE of **39.2180**, this corresponds to an approximate **54.3%** reduction:
+The selected challenge is the alternative-fitness challenge. The implemented perceptual solution replaces RMSE with mean per-pixel CIEDE2000 color distance in CIELAB color space:
 
 ```text
-(39.2180 - 17.9061) / 39.2180 = 0.5434
+fitness = mean(DeltaE2000(Lab(candidate), Lab(target)))
 ```
 
-The improvement came from three main decisions: increasing the computational budget, using tournament selection with controlled pressure, and replacing one-point crossover with uniform whole-triangle crossover. Gaussian mutation remained central because the representation is continuous and local perturbations are meaningful for both triangle geometry and color.
+This is implemented in `PerceptualTriangleSolution`, a subclass of `TriangleSolution` that only changes the `fitness()` method. The GA loop, operators, representation, and caching behavior are unchanged.
 
-## 6. Conclusion
+The motivation is that equal numeric differences in RGB are not equally visible to humans. CIEDE2000 is more aligned with perceptual color differences, so it can reward images that look closer to a human observer even when their RMSE is not the lowest.
 
-The final implementation solves the assigned problem with a real-valued, fixed-length representation of 100 semi-transparent triangles and an RMSE objective consistent with the project statement. The main adaptation was to make genetic operators respect the triangle structure: crossover works on whole triangles, and mutation perturbs bounded coordinate and RGBA genes in a way that matches the rendering domain.
+### 6.1 Paired Comparison Design
 
-Our component evaluation supports the final design. Tournament selection was kept because it gives explicit control over selection pressure. Uniform whole-triangle crossover was kept because it significantly outperformed one-point crossover in the stored 30-run comparison. Full Gaussian mutation was kept because it provides the broadest useful local refinement among the mutation variants tested. More complex additions, such as fitness sharing, self-adaptive mutation rates, layer-swap mutation, and geometric crossover, were implemented and considered, but not retained in the final run because they either added overhead, were less stable, or did not improve the best recorded result.
+The experiment is designed as a paired comparison between the RMSE GA and the perceptual GA. For run `i`, both algorithms use the same seed and the same GA configuration, so the initial population and stochastic sequence are comparable. The only intended difference is the fitness function.
 
-For future work, the most promising improvement would be smarter initialization, for example sampling triangle colors from the target image. A second useful extension would be a final local-search phase applied only to the best GA result. Both should be evaluated under equal fitness-evaluation budgets to keep the comparison fair.
+Because RMSE and Delta E2000 are on different scales, the comparison cross-evaluates every best solution on both metrics:
+
+| Optimized fitness | Evaluated with RMSE | Evaluated with Delta E2000 |
+|---|---:|---:|
+| RMSE GA | TODO | TODO |
+| Perceptual GA | TODO | TODO |
+
+The paired Wilcoxon signed-rank test is then used to test whether one method consistently produces lower scores on each metric. The expected interpretation is that each GA may perform best on the metric it directly optimizes, while the report should also discuss which result appears visually closer to a human observer.
+
+**TODO before final PDF:** run the paired perceptual comparison, insert the cross-evaluation table, Wilcoxon p-values, convergence plots, metric distributions, and visual comparison.
+
+## 7. Additional Experiments
+
+### 7.1 Fitness Sharing
+
+Fitness sharing was implemented to encourage population diversity by penalizing individuals in crowded regions of the search space. The later implementation uses normalized representation distances and includes diversity-report helpers, which makes niche counts more meaningful than using raw coordinate and color distances directly.
+
+Fitness sharing is useful as an exploration mechanism, but it adds computational overhead and is not currently part of the final GA configuration. It is reported as an additional diversity experiment rather than as the final selection method.
+
+### 7.2 Hill Climbing for Local Search
+
+The notebook also includes a hill-climbing polishing step applied after the GA. This step perturbs the best GA solution locally with decaying step sizes and accepts improvements. It is useful because the GA discovers a strong global structure, while local search can make small refinements to triangle vertices and colors.
+
+If the final submitted image uses hill climbing, the report should count it as an extra post-processing phase and report both values:
+
+```text
+GA final RMSE: TODO
+After hill climbing: TODO
+Additional evaluations: TODO
+```
+
+If the submitted image uses only the GA result, this section should remain an additional experiment rather than part of the final result.
+
+## 8. Conclusion
+
+The implementation solves the assigned image-approximation problem with a fixed-length, real-valued representation of 100 semi-transparent triangles. The main GA uses the required RMSE objective, while the selected challenge extends the project with a perceptual CIEDE2000 fitness function.
+
+The operator study supports the final design. Tournament selection was kept because it provides direct control over selection pressure. Uniform whole-triangle crossover was kept because it recombines partial image structures without breaking triangles. Full Gaussian mutation was kept because the genotype is continuous and local perturbations are meaningful for both geometry and color. The population-size comparison is now framed by fitness-evaluation budget, which makes the comparison fairer than plotting only by generation.
+
+More complex additions, including fitness sharing, self-adaptive mutation rates, layer-swap mutation, geometric crossover, geometric mutation, and hill climbing, were implemented and considered. The current final GA keeps the simpler configuration because it is easier to justify statistically and has produced the best current convergence behavior, while the additional methods remain useful for analysis and future improvement.
+
+## 9. References
+
+**TODO before final PDF:** format references consistently. Suggested references:
+
+1. Group project statement, Computational Intelligence for Optimization, 2025/2026.
+2. L. Vanneschi and S. Silva, Genetic Algorithms chapter from the course material.
+3. G. Sharma, W. Wu, and E. N. Dalal, "The CIEDE2000 Color-Difference Formula: Implementation Notes, Supplementary Test Data, and Mathematical Observations."
+4. `scikit-image` documentation for `rgb2lab` and `deltaE_ciede2000`, if the implementation reference is included.
 
 ## Appendix: Reproducibility Notes
 
 | File | Purpose |
 |---|---|
 | `scripts/triangle_sol.py` | Solution representation, rendering, adaptive representation, and RMSE fitness |
-| `scripts/ga.py` | Main generational GA with elitism and optional mutation-rate decay |
+| `scripts/ga.py` | Main generational GA with elitism, one-child/two-child crossover support, and optional mutation-rate decay |
 | `scripts/ga_utils.py` | Fitness caching and parallel population evaluation |
 | `operators/selection.py` | Roulette, rank-based, and tournament selection |
 | `operators/crossover.py` | One-point, two-point, uniform, and geometric crossover |
-| `operators/mutation.py` | Gaussian, reset, and layer-swap mutation operators |
-| `operators/fitness_sharing.py` | Fitness-sharing diversity utilities |
-| `scripts/statistical_comparison.py` | Repeated-run comparison, plotting, and statistical testing |
-| `main_nb.ipynb` | Experiments, plots, and final run |
+| `operators/mutation.py` | Gaussian, reset, layer-swap, and geometric mutation operators |
+| `operators/new_fitness_sharing.py` | Normalized fitness-sharing selection and diversity metrics |
+| `scripts/new_hill_climbing.py` | Local-search polishing after the GA |
+| `scripts/perceptual_fitness.py` | CIEDE2000 perceptual fitness and cross-evaluation helpers |
+| `scripts/perceptual_comparison.py` | Paired RMSE-vs-perceptual experiment, Wilcoxon tests, and plots |
+| `scripts/statistical_comparison.py` | Repeated-run comparison, ABF/MBF plotting, statistical testing, and result saving |
+| `main_nb.ipynb` | Full notebook workflow, plots, final run, challenge section, and saved result |
 
-The final run is reproduced by executing the final GA section in `main_nb.ipynb` after loading `project_info/girl_pearl_earing.png` into `TriangleSolution.target_array`.
+The final run is reproduced by executing the final GA section in `main_nb.ipynb` after loading `project_info/girl_pearl_earing.png` into `TriangleSolution.target_array`. Before exporting the final report, rerun the statistical and final-result cells, refresh `best_result.png`, and replace all `TODO` placeholders with the final values.
+
+## Appendix: Figures and Tables to Add
+
+The body of the report should keep only the most important plots. Extra plots can be moved here:
+
+- Operator comparison plots for selection, crossover, and mutation.
+- Hyperparameter comparison plots for mutation rate, sigma values, elitism, and crossover rate.
+- Population-size comparison plotted against cumulative evaluations.
+- Perceptual-fitness convergence and cross-evaluation plots.
+- Final candidate image and any hill-climbing improvement curve.
